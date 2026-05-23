@@ -214,11 +214,14 @@ app.get('/api/settings', requireAuth, (req, res) => {
       settings[r.key] = r.value;
     }
   });
+  settings.telegram_via_env = !!(process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID);
   res.json(settings);
 });
 
 app.put('/api/settings', requireAuth, (req, res) => {
-  const allowed = ['telegram_bot_token', 'telegram_chat_id', 'check_interval', 'notify_price_drop', 'notify_back_in_stock'];
+  let allowed = ['telegram_bot_token', 'telegram_chat_id', 'check_interval', 'notify_price_drop', 'notify_back_in_stock'];
+  if (process.env.TELEGRAM_BOT_TOKEN) allowed = allowed.filter(k => k !== 'telegram_bot_token');
+  if (process.env.TELEGRAM_CHAT_ID) allowed = allowed.filter(k => k !== 'telegram_chat_id');
   const update = db.prepare('UPDATE settings SET value = ? WHERE key = ?');
   const batch = db.transaction(updates => {
     for (const [key, value] of updates) {
@@ -231,8 +234,8 @@ app.put('/api/settings', requireAuth, (req, res) => {
 });
 
 app.post('/api/settings/test-telegram', requireAuth, async (req, res) => {
-  const token = db.prepare("SELECT value FROM settings WHERE key = 'telegram_bot_token'").get()?.value;
-  const chatId = db.prepare("SELECT value FROM settings WHERE key = 'telegram_chat_id'").get()?.value;
+  const token = process.env.TELEGRAM_BOT_TOKEN || db.prepare("SELECT value FROM settings WHERE key = 'telegram_bot_token'").get()?.value;
+  const chatId = process.env.TELEGRAM_CHAT_ID || db.prepare("SELECT value FROM settings WHERE key = 'telegram_chat_id'").get()?.value;
   if (!token || !chatId) return res.status(400).json({ error: 'Telegram bot token and chat ID are not configured' });
   const ok = await sendTelegram(token, chatId,
     '✅ <b>Price Tracker — Test Notification</b>\n\nYour Telegram notifications are working correctly!'

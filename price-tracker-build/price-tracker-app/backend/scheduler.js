@@ -67,8 +67,8 @@ async function checkItem(item) {
 
   const settings = {};
   db.prepare('SELECT key, value FROM settings').all().forEach(r => { settings[r.key] = r.value; });
-  const botToken = settings.telegram_bot_token;
-  const chatId = settings.telegram_chat_id;
+  const botToken = process.env.TELEGRAM_BOT_TOKEN || settings.telegram_bot_token;
+  const chatId = process.env.TELEGRAM_CHAT_ID || settings.telegram_chat_id;
   if (!botToken || !chatId) return;
 
   // Price drop notification

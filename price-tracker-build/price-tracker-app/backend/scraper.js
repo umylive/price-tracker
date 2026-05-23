@@ -211,7 +211,9 @@ async function scrapeAmazonSA(url) {
 }
 
 function tryParseRunParams(html) {
-  const idx = html.indexOf('window.runParams');
+  // AliExpress assigns runParams in several ways across versions
+  let idx = html.indexOf('window.runParams');
+  if (idx === -1) idx = html.indexOf('"runParams"');
   if (idx === -1) return null;
   const startBrace = html.indexOf('{', idx);
   if (startBrace === -1) return null;
@@ -241,14 +243,26 @@ function tryParseRunParams(html) {
     if (price == null && pm.formatedPrice) price = parsePrice(pm.formatedPrice);
     if (price == null && pm.activityAmount?.value != null) price = parseFloat(pm.activityAmount.value);
 
-    // skuModule fallback (newer runParams structure)
+    // skuModule: iterate all variants (color/size options), take minimum sale price
     if (price == null && d.skuModule?.skuPriceList?.length) {
-      const sp = d.skuModule.skuPriceList[0].skuVal;
-      price = sp?.skuActivityAmount?.value ?? sp?.skuAmount?.value ?? null;
-      if (price != null) price = parseFloat(price);
+      let minPrice = null;
+      let skuCurrency = null;
+      for (const sku of d.skuModule.skuPriceList) {
+        const sv = sku.skuVal;
+        const p = sv?.skuActivityAmount?.value ?? sv?.skuAmount?.value ?? null;
+        if (p != null) {
+          const n = parseFloat(p);
+          if (minPrice == null || n < minPrice) {
+            minPrice = n;
+            skuCurrency = sv?.skuActivityAmount?.currency ?? sv?.skuAmount?.currency ?? null;
+          }
+        }
+      }
+      if (minPrice != null) { price = minPrice; if (skuCurrency) { /* used below */ } }
     }
 
-    const currency = pm.minActivityAmount?.currency ?? pm.minAmount?.currency ?? pm.activityAmount?.currency ?? 'USD';
+    const currency = pm.minActivityAmount?.currency ?? pm.minAmount?.currency ?? pm.activityAmount?.currency ??
+      (d.skuModule?.skuPriceList?.[0]?.skuVal?.skuActivityAmount?.currency) ?? 'USD';
 
     let originalPrice = pm.maxAmount?.value != null ? parseFloat(pm.maxAmount.value) : null;
     if (originalPrice != null && originalPrice === parseFloat(price)) originalPrice = null;
@@ -336,6 +350,18 @@ function parseAliExpressHtml(html, $) {
         if (p != null) price = p;
       }
     } catch (_) {}
+  }
+
+  // Last resort: scan raw HTML for currency+price strings like "SAR 436.53" or "USD 89.99"
+  // Collect all matches, take the minimum non-zero value (most likely the sale price)
+  if (price == null) {
+    const scanPat = /["'\s>]((?:SAR|USD|EUR|GBP|AED)\s*\+?\s*[\d,]+\.?\d*)/g;
+    let m2; const candidates = [];
+    while ((m2 = scanPat.exec(html)) !== null) {
+      const p = parsePrice(m2[1]);
+      if (p != null && p > 0) candidates.push(p);
+    }
+    if (candidates.length) price = Math.min(...candidates);
   }
 
   let originalPrice = null;

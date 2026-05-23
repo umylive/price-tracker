@@ -11,3 +11,5 @@ services:
       - TZ=Asia/Riyadh
       - PORT=3000
       - DATA_DIR=/data
+      - TELEGRAM_BOT_TOKEN=
+      - TELEGRAM_CHAT_ID=

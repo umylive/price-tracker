@@ -59,4 +59,6 @@
   <Config Name="WebUI Port" Target="3000" Default="8766" Mode="tcp" Description="Host port for web access" Type="Port" Display="always" Required="true" Mask="false">8766</Config>
   <Config Name="Data Directory" Target="/data" Default="/mnt/user/appdata/price-tracker" Mode="rw" Description="Where the SQLite database is stored" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/price-tracker</Config>
   <Config Name="Timezone" Target="TZ" Default="Asia/Riyadh" Mode="" Description="Container timezone" Type="Variable" Display="always" Required="false" Mask="false">Asia/Riyadh</Config>
+  <Config Name="Telegram Bot Token" Target="TELEGRAM_BOT_TOKEN" Default="" Mode="" Description="Telegram bot token from @BotFather. If set here, it cannot be changed from inside the app." Type="Variable" Display="always" Required="false" Mask="true"></Config>
+  <Config Name="Telegram Chat ID" Target="TELEGRAM_CHAT_ID" Default="" Mode="" Description="Your Telegram chat ID (message @userinfobot to get it). Required alongside the bot token." Type="Variable" Display="always" Required="false" Mask="false"></Config>
 </Container>
