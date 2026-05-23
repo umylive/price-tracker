@@ -10,8 +10,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 cd price-tracker-build/price-tracker-app
-docker-compose up -d --build   # build and start
-docker-compose down            # stop
+docker compose up -d --build   # build and start  (use "docker compose", not "docker-compose")
+docker compose down            # stop
 docker logs price-tracker      # check logs
 docker restart price-tracker   # restart
 ```
@@ -48,7 +48,7 @@ price-tracker-build/price-tracker-app/
 │   ├── index.html     # Entire SPA — vanilla JS, Chart.js from CDN
 │   ├── sw.js          # Service worker (stale-while-revalidate, no API cache)
 │   └── manifest.json  # PWA manifest
-├── Dockerfile         # node:20-alpine + tini
+├── Dockerfile         # node:20-alpine + tini + python3/make/g++ (for better-sqlite3 native build)
 └── docker-compose.yml # port 8766→3000, volume /mnt/user/appdata/price-tracker:/data
 ```
 
@@ -56,13 +56,13 @@ price-tracker-build/price-tracker-app/
 
 ## Key Architectural Patterns
 
-**Auth**: Cookie-based sessions (30-day, httpOnly). First user to `/api/auth/register` becomes admin; registration then closes. Rate limiting: 5 failures → 15-min lockout per username+IP.
+**Auth**: Cookie-based sessions (30-day, httpOnly), stored in the SQLite `sessions` table. First user to `/api/auth/register` becomes admin; registration then closes. Rate limiting: 5 failures → 15-min lockout per username+IP.
 
-**Scraper** (`scraper.js`): `scrapeAmazonSA` uses `axios` with rotating user agents and browser-like headers, retries 3× with backoff, and returns `{ title, price, originalPrice, currency, sellerName, isAmazonDirect, isPrime, inStock, imageUrl }`. Tries JSON-LD structured data first, falls back to CSS selector parsing. Uses the English URL prefix (`/-/en/dp/ASIN`) for consistent content and Western numerals. CAPTCHA detection breaks the retry loop immediately.
+**Scraper** (`scraper.js`): `scrapeAmazonSA` uses `axios` with rotating user agents and browser-like headers, retries 3× with backoff, and returns `{ title, price, originalPrice, currency, sellerName, isAmazonDirect, isPrime, inStock, imageUrl }`. Tries JSON-LD structured data first, falls back to CSS selector parsing. Uses the English URL prefix (`/-/en/dp/ASIN`) for consistent content and Western numerals. CAPTCHA detection breaks the retry loop immediately (no more retries). `parsePrice()` strips Arabic-Indic digits (٠-٩) before parsing, so both numeral systems work. `extractASIN` and `normalizeUrl` are also exported.
 
-**`normalizeUrl(input)`** in `scraper.js`: accepts a full amazon.sa URL or a bare 10-char ASIN. Returns `{ url, asin, store: 'amazon_sa' }`, always normalised to `https://www.amazon.sa/-/en/dp/{ASIN}`. Returns `null` for anything else (including aliexpress.com — not supported).
+**`normalizeUrl(input)`** in `scraper.js`: accepts a full amazon.sa URL or a bare 10-char ASIN. Returns `{ url, asin, store: 'amazon_sa' }`, always normalised to `https://www.amazon.sa/-/en/dp/{ASIN}`. Returns `null` for anything else. Amazon.sa URLs without a detectable ASIN return `{ asin: null, store: 'amazon_sa' }`.
 
-**Scheduler** (`scheduler.js`): Single `node-cron` task with interval from `settings.check_interval` (minutes). `restartScheduler()` rebuilds it when the interval changes. Items run sequentially with a **60-second delay** between each to avoid rate limiting. `runAllChecks()` runs all active items (used by the "Check All Now" button).
+**Scheduler** (`scheduler.js`): Single `node-cron` task with interval from `settings.check_interval` (minutes). `restartScheduler()` rebuilds it when the interval changes. Items run sequentially with a **60-second delay** between each to avoid rate limiting. `runAllChecks()` runs all active items (used by the "Check All Now" button). Both `runAllChecks` and `checkItem`'s error handler are wrapped in try/catch — this prevents an FK constraint error (item deleted while being checked) from crashing the Node 20 process as an unhandled rejection.
 
 **Telegram notifications**: Bot token is read from `process.env.TELEGRAM_BOT_TOKEN` first, falling back to the `settings` table. Chat ID is always from the `settings` table. Uses the Bot API directly via `fetch` with HTML-formatted messages. Fires when:
 - Price drops by ≥ `items.notify_drop_percent` (default 5%), OR price hits `items.target_price`
@@ -71,6 +71,10 @@ price-tracker-build/price-tracker-app/
 **Frontend state**: Single `state` object with `user`, `items`, `checking` (Set of item IDs being checked). `renderDashboard()` rewrites `#app` on every data change. Sheets (bottom drawers) use CSS transforms; only one sheet open at a time. Chart.js instance stored in `state.sheetChart` and destroyed before reopening.
 
 **Seller detection**: `is_amazon_direct` in `price_history` is set to 1 when the merchant text contains "ships from and sold by amazon" or the seller name starts with "Amazon". Shown as a badge on each item card. Chart colours: blue for Amazon direct, orange for third-party.
+
+## Critical Frontend Gotcha: Template Literals
+
+`frontend/index.html` is one large `<script>` block full of template literals that build HTML strings. **Raw backtick characters inside any `innerHTML = \`...\`` template literal will terminate the string early**, causing a JavaScript syntax error that prevents the entire script from loading (blank blue screen). Always use HTML entities or restructure — never put a bare `` ` `` inside a template literal string value.
 
 ## SQLite Timestamp Gotcha
 
@@ -83,6 +87,16 @@ new Date(ts).getTime();
 
 The `relativeTime()` helper in `frontend/index.html` already does this.
 
+## API Response Shapes
+
+`GET /api/items` returns each item enriched with:
+- `latest` — most recent `price_history` row where `error IS NULL` (or `null`)
+- `prevPrice` — second-most-recent non-error price (for change % calculation)
+- `lowestPrice`, `highestPrice` — all-time stats
+- `lastError` — most recent error message from `price_history`
+
+`GET /api/notifications` joins `notifications` with `items`, adding `item_name` and `item_url` to each row.
+
 ## Environment Variables
 
 | Variable | Default | Purpose |
@@ -94,10 +108,12 @@ The `relativeTime()` helper in `frontend/index.html` already does this.
 
 ## Database Schema
 
-- `users` → `items` (user_id FK) → `price_history` (item_id FK)
-- `items` → `notifications` (item_id FK)
+- `users` → `items` (user_id FK, CASCADE) → `price_history` (item_id FK, CASCADE)
+- `items` → `notifications` (item_id FK, CASCADE)
 - `sessions`, `login_attempts` — auth only
 - `settings` — key/value store: `telegram_bot_token`, `telegram_chat_id`, `check_interval`, `notify_price_drop`, `notify_back_in_stock`
+
+`foreign_keys = ON` is set at startup, so all CASCADE deletes are enforced.
 
 ## API Surface
 
@@ -112,6 +128,8 @@ The `relativeTime()` helper in `frontend/index.html` already does this.
 **Settings**: `GET /api/settings`, `PUT /api/settings`, `POST /api/settings/test-telegram`
 
 **Notifications**: `GET /api/notifications`
+
+All non-`/api` routes serve `frontend/index.html` (SPA fallback).
 
 ## Adding Another Store
 
