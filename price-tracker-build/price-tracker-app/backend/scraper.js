@@ -380,8 +380,14 @@ function parseAliScriptBlobs(html) {
 }
 
 async function scrapeAliExpress(url) {
-  console.log(`[aliexpress] launching browser for: ${url}`);
-  const puppeteer = require('puppeteer-core');
+  console.log(`[aliexpress] launching stealth browser for: ${url}`);
+
+  const { addExtra } = require('puppeteer-extra');
+  const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+  const puppeteerCore = require('puppeteer-core');
+  const puppeteer = addExtra(puppeteerCore);
+  puppeteer.use(StealthPlugin());
+
   let browser;
   try {
     browser = await puppeteer.launch({
@@ -394,6 +400,7 @@ async function scrapeAliExpress(url) {
         '--disable-gpu',
         '--no-first-run',
         '--no-zygote',
+        '--disable-blink-features=AutomationControlled',
       ],
       headless: true,
     });
@@ -405,10 +412,10 @@ async function scrapeAliExpress(url) {
 
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
 
-    // Give JS time to render price/title into the DOM
+    // Wait for price or title to appear in the rendered DOM
     await Promise.race([
-      page.waitForSelector('[class*="price"], .product-title-text', { timeout: 10000 }).catch(() => {}),
-      new Promise(r => setTimeout(r, 8000)),
+      page.waitForSelector('[class*="price"], .product-title-text', { timeout: 12000 }).catch(() => {}),
+      new Promise(r => setTimeout(r, 10000)),
     ]);
 
     const html = await page.content();
@@ -419,11 +426,13 @@ async function scrapeAliExpress(url) {
       nextData: html.includes('__NEXT_DATA__'),
       ld: html.includes('"@type":"Product"'),
       salePrice: html.includes('salePrice'),
-      captcha: html.includes('captcha') || html.includes('_Captcha'),
+      // Only flag real CAPTCHA challenge UI — not just the captcha JS loader
+      captcha: $('[id*="baxia"], #nc_1_wrapper, [class*="captcha-verify"]').length > 0
+        || html.includes('window._baxia_') || html.includes('captchaVerify'),
     };
     console.log(`[aliexpress] rendered ${html.length}b — ${JSON.stringify(markers)}`);
 
-    if (markers.captcha) throw new Error('CAPTCHA detected on rendered page');
+    if (markers.captcha) throw new Error('CAPTCHA challenge detected — bot protection triggered');
 
     const ld = parseJsonLd($);
     if (ld?.title && ld?.price != null) { console.log('[aliexpress] via JSON-LD'); return { ...ld, isAmazonDirect: false, isPrime: false }; }
