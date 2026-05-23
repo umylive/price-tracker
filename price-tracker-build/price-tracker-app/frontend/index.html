@@ -751,44 +751,6 @@ async function openSettingsSheet() {
         <div id="check-all-msg" style="margin-top:8px"></div>
       </div>
 
-      <div class="settings-section">
-        <h3>AliExpress API</h3>
-        ${settings.aliexpress_via_env ? `
-        <div class="form-group">
-          <div style="display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--surface2);border-radius:8px;font-size:13px;color:var(--text)">
-            <span style="font-size:16px">🔑</span>
-            <span>App Key &amp; Secret set via environment variables — cannot be changed here.</span>
-          </div>
-        </div>` : `
-        <div class="form-group">
-          <label>App Key</label>
-          <input type="text" id="s-ali-app-key" value="${escHtml(settings.aliexpress_app_key || '')}" placeholder="e.g. 12345678" autocomplete="off">
-          <div class="hint">From your AliExpress Open Platform app.</div>
-        </div>
-        <div class="form-group">
-          <label>App Secret</label>
-          <input type="password" id="s-ali-app-secret" placeholder="${settings.aliexpress_app_secret ? '(saved — enter to change)' : 'Enter App Secret'}" autocomplete="off">
-        </div>`}
-        <div class="form-group" style="margin-top:12px">
-          <label>AliExpress Account</label>
-          ${settings.aliexpress_connected ? (() => {
-            const exp = settings.aliexpress_token_expires ? new Date(settings.aliexpress_token_expires.includes('T') ? settings.aliexpress_token_expires : settings.aliexpress_token_expires.replace(' ', 'T') + 'Z') : null;
-            const expStr = exp ? exp.toLocaleDateString() : 'unknown';
-            return `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-              <span style="color:var(--success);font-size:13px;font-weight:600">✓ Connected</span>
-              <span style="color:var(--muted);font-size:12px">Token expires ${expStr}</span>
-              <button class="btn btn-ghost btn-sm" data-action="ali-disconnect">Disconnect</button>
-            </div>`;
-          })() : `
-          <div style="display:flex;flex-direction:column;gap:8px">
-            <div style="font-size:13px;color:var(--muted)">Connect your AliExpress account to enable price tracking via the product API.</div>
-            <div style="font-size:12px;color:var(--muted)">Before connecting, add this callback URL to your app in the AliExpress Open Platform portal:<br>
-              <code style="background:var(--surface2);padding:3px 7px;border-radius:4px;font-size:11px;word-break:break-all">${window.location.origin}/api/auth/aliexpress/callback</code>
-            </div>
-            <a href="/api/auth/aliexpress/start" class="btn btn-primary btn-sm" style="align-self:flex-start;text-decoration:none">Connect AliExpress Account</a>
-          </div>`}
-        </div>
-      </div>
 
       <div class="settings-section">
         <h3>Account</h3>
@@ -962,13 +924,9 @@ document.addEventListener('click', async e => {
     const interval = document.getElementById('s-interval')?.value;
     const notifyDrop = document.getElementById('s-notify-drop')?.checked ? '1' : '0';
     const notifyStock = document.getElementById('s-notify-stock')?.checked ? '1' : '0';
-    const aliAppKey = document.getElementById('s-ali-app-key')?.value.trim();
-    const aliAppSecret = document.getElementById('s-ali-app-secret')?.value.trim();
     const payload = { check_interval: interval, notify_price_drop: notifyDrop, notify_back_in_stock: notifyStock };
     if (chatId) payload.telegram_chat_id = chatId;
     if (botToken) payload.telegram_bot_token = botToken;
-    if (aliAppKey) payload.aliexpress_app_key = aliAppKey;
-    if (aliAppSecret) payload.aliexpress_app_secret = aliAppSecret;
     const btn = el;
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner"></span>';
@@ -980,17 +938,6 @@ document.addEventListener('click', async e => {
     } finally {
       btn.disabled = false;
       btn.innerHTML = 'Save Settings';
-    }
-    return;
-  }
-
-  if (action === 'ali-disconnect') {
-    if (!confirm('Disconnect your AliExpress account?')) return;
-    try {
-      await api('POST', '/api/auth/aliexpress/disconnect');
-      await openSettingsSheet();
-    } catch (err) {
-      setMsg('settings-msg', escHtml(err.message));
     }
     return;
   }

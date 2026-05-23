@@ -12,5 +12,3 @@ services:
       - PORT=3000
       - DATA_DIR=/data
       - TELEGRAM_BOT_TOKEN=
-      - ALIEXPRESS_APP_KEY=
-      - ALIEXPRESS_APP_SECRET=

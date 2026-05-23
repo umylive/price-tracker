@@ -1,6 +1,11 @@
-FROM node:20-alpine
+FROM node:24-alpine
 
-RUN apk add --no-cache python3 make g++ tini
+RUN apk add --no-cache \
+    python3 make g++ tini \
+    chromium nss freetype harfbuzz ca-certificates ttf-freefont
+
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
 
 WORKDIR /app
 

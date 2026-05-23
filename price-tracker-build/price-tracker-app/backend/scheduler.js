@@ -1,39 +1,8 @@
 const cron = require('node-cron');
-const axios = require('axios');
 const db = require('./database');
 const { scrapeAmazonSA, scrapeAliExpress } = require('./scraper');
 
 let currentTask = null;
-
-async function getValidAliToken(appKey, appSecret) {
-  const getSetting = k => db.prepare('SELECT value FROM settings WHERE key = ?').get(k)?.value || '';
-  const setSetting = (k, v) => db.prepare('UPDATE settings SET value = ? WHERE key = ?').run(String(v), k);
-
-  const accessToken = getSetting('aliexpress_access_token');
-  if (!accessToken) return null;
-
-  const expiresAt = getSetting('aliexpress_token_expires');
-  if (expiresAt && new Date(expiresAt) > new Date(Date.now() + 300_000)) return accessToken;
-
-  const refreshToken = getSetting('aliexpress_refresh_token');
-  if (!refreshToken) return null;
-
-  try {
-    const { data } = await axios.post('https://oauth.aliexpress.com/token',
-      new URLSearchParams({ grant_type: 'refresh_token', refresh_token: refreshToken, client_id: appKey, client_secret: appSecret }).toString(),
-      { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 10000 }
-    );
-    if (!data.access_token) { console.error('[aliexpress token] refresh failed:', JSON.stringify(data)); return null; }
-    setSetting('aliexpress_access_token', data.access_token);
-    if (data.refresh_token) setSetting('aliexpress_refresh_token', data.refresh_token);
-    setSetting('aliexpress_token_expires', new Date(Date.now() + (data.expire_time || 2592000) * 1000).toISOString());
-    console.log('[aliexpress token] refreshed successfully');
-    return data.access_token;
-  } catch (e) {
-    console.error('[aliexpress token] refresh error:', e.message);
-    return null;
-  }
-}
 
 async function sendTelegram(botToken, chatId, message) {
   if (!botToken || !chatId) return false;
@@ -62,11 +31,7 @@ async function checkItem(item) {
   let scraped;
   try {
     if (item.store === 'aliexpress') {
-      const getSetting = k => db.prepare('SELECT value FROM settings WHERE key = ?').get(k)?.value || '';
-      const appKey = process.env.ALIEXPRESS_APP_KEY || getSetting('aliexpress_app_key');
-      const appSecret = process.env.ALIEXPRESS_APP_SECRET || getSetting('aliexpress_app_secret');
-      const accessToken = await getValidAliToken(appKey, appSecret);
-      scraped = await scrapeAliExpress(item.url, appKey, appSecret, accessToken);
+      scraped = await scrapeAliExpress(item.url);
     } else {
       scraped = await scrapeAmazonSA(item.url);
     }
@@ -203,4 +168,4 @@ function restartScheduler() {
   startScheduler();
 }
 
-module.exports = { startScheduler, restartScheduler, runAllChecks, checkItem, sendTelegram, getValidAliToken };
+module.exports = { startScheduler, restartScheduler, runAllChecks, checkItem, sendTelegram };
