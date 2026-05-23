@@ -1,10 +1,6 @@
-FROM node:24-slim
+FROM node:20-alpine
 
-# chromium pulls all glibc deps that Puppeteer's bundled Chrome needs at runtime
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 make g++ tini \
-    chromium \
-    && rm -rf /var/lib/apt/lists/*
+RUN apk add --no-cache tini python3 make g++
 
 WORKDIR /app
 
@@ -22,5 +18,5 @@ EXPOSE 3000
 
 VOLUME ["/data"]
 
-ENTRYPOINT ["tini", "--"]
+ENTRYPOINT ["/sbin/tini", "--"]
 CMD ["node", "backend/server.js"]

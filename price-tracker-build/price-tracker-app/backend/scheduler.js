@@ -2,7 +2,8 @@ const cron = require('node-cron');
 const db = require('./database');
 const { scrapeAmazonSA, scrapeAliExpress } = require('./scraper');
 
-let currentTask = null;
+let amazonTask = null;
+let aliexpressTask = null;
 
 async function sendTelegram(botToken, chatId, message) {
   if (!botToken || !chatId) return false;
@@ -28,10 +29,14 @@ async function sendTelegram(botToken, chatId, message) {
 
 async function checkItem(item) {
   console.log(`[check] ${item.name}`);
+  const settings = {};
+  db.prepare('SELECT key, value FROM settings').all().forEach(r => { settings[r.key] = r.value; });
+
   let scraped;
   try {
     if (item.store === 'aliexpress') {
-      scraped = await scrapeAliExpress(item.url);
+      const zenrowsKey = process.env.ZENROWS_API_KEY || settings.zenrows_api_key;
+      scraped = await scrapeAliExpress(item.url, zenrowsKey);
     } else {
       scraped = await scrapeAmazonSA(item.url);
     }
@@ -67,8 +72,6 @@ async function checkItem(item) {
 
   console.log(`  [ok] ${scraped.currency || 'SAR'} ${scraped.price} | seller: ${scraped.sellerName} | inStock: ${scraped.inStock}`);
 
-  const settings = {};
-  db.prepare('SELECT key, value FROM settings').all().forEach(r => { settings[r.key] = r.value; });
   const botToken = process.env.TELEGRAM_BOT_TOKEN || settings.telegram_bot_token;
   const chatId = settings.telegram_chat_id;
   if (!botToken || !chatId) return;
@@ -137,15 +140,25 @@ function buildStockMsg(item, scraped) {
   ].join('\n');
 }
 
+async function runStoreChecks(store, label) {
+  const items = db.prepare('SELECT * FROM items WHERE active = 1 AND store = ?').all(store);
+  if (!items.length) return;
+  console.log(`[scheduler/${label}] Checking ${items.length} items`);
+  for (let i = 0; i < items.length; i++) {
+    await checkItem(items[i]);
+    if (i < items.length - 1) await new Promise(r => setTimeout(r, 60000));
+  }
+  console.log(`[scheduler/${label}] Done`);
+}
+
 async function runAllChecks() {
   const items = db.prepare('SELECT * FROM items WHERE active = 1').all();
-  console.log(`[scheduler] Checking ${items.length} active items`);
-  for (const item of items) {
-    await checkItem(item);
-    // 1-minute delay between items to avoid rate limiting
-    await new Promise(r => setTimeout(r, 60000));
+  console.log(`[scheduler] Manual check: ${items.length} active items`);
+  for (let i = 0; i < items.length; i++) {
+    await checkItem(items[i]);
+    if (i < items.length - 1) await new Promise(r => setTimeout(r, 60000));
   }
-  console.log('[scheduler] Done');
+  console.log('[scheduler] Manual check done');
 }
 
 function buildCronExpr(minutes) {
@@ -155,13 +168,22 @@ function buildCronExpr(minutes) {
 }
 
 function startScheduler() {
-  const row = db.prepare("SELECT value FROM settings WHERE key = 'check_interval'").get();
-  const minutes = parseInt(row?.value || '60', 10);
-  const expr = buildCronExpr(minutes);
+  const amazonRow = db.prepare("SELECT value FROM settings WHERE key = 'check_interval'").get();
+  const amazonMinutes = parseInt(amazonRow?.value || '60', 10);
+  const amazonExpr = buildCronExpr(amazonMinutes);
 
-  if (currentTask) { currentTask.stop(); currentTask = null; }
-  currentTask = cron.schedule(expr, runAllChecks);
-  console.log(`[scheduler] Started — every ${minutes}min (${expr})`);
+  const aliRow = db.prepare("SELECT value FROM settings WHERE key = 'aliexpress_check_interval'").get();
+  const aliMinutes = parseInt(aliRow?.value || '180', 10);
+  const aliExpr = buildCronExpr(aliMinutes);
+
+  if (amazonTask) { amazonTask.stop(); amazonTask = null; }
+  if (aliexpressTask) { aliexpressTask.stop(); aliexpressTask = null; }
+
+  amazonTask = cron.schedule(amazonExpr, () => runStoreChecks('amazon_sa', 'amazon'));
+  aliexpressTask = cron.schedule(aliExpr, () => runStoreChecks('aliexpress', 'aliexpress'));
+
+  console.log(`[scheduler] Amazon SA: every ${amazonMinutes}min (${amazonExpr})`);
+  console.log(`[scheduler] AliExpress: every ${aliMinutes}min (${aliExpr})`);
 }
 
 function restartScheduler() {

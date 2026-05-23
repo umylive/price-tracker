@@ -50,6 +50,8 @@ function parsePrice(text) {
   return m ? parseFloat(m[0]) : null;
 }
 
+// ── Amazon SA ─────────────────────────────────────────────────────────────────
+
 function parseJsonLd($) {
   let result = null;
   $('script[type="application/ld+json"]').each((_, el) => {
@@ -208,42 +210,172 @@ async function scrapeAmazonSA(url) {
   throw lastError || new Error('Scraping failed');
 }
 
-// ── AliExpress scraper (Puppeteer) ────────────────────────────────────────────
-// Uses aliexpress-product-scraper (ESM) via dynamic import.
-// Puppeteer runs the system Chromium set by PUPPETEER_EXECUTABLE_PATH.
-async function scrapeAliExpress(url) {
-  const itemId = url.match(/\/item\/(\d+)/)?.[1];
-  if (!itemId) throw new Error('Could not extract AliExpress product ID from URL');
+// ── AliExpress (Zenrows proxy) ────────────────────────────────────────────────
 
-  console.log(`[aliexpress] fetching product ${itemId} via Puppeteer`);
-  const { default: scrape } = await import('aliexpress-product-scraper');
+function extractBracedJson(html, marker) {
+  const idx = html.indexOf(marker);
+  if (idx === -1) return null;
+  const start = html.indexOf('{', idx + marker.length);
+  if (start === -1) return null;
+  let depth = 0, inStr = false, esc = false;
+  for (let i = start; i < html.length; i++) {
+    const c = html[i];
+    if (esc) { esc = false; continue; }
+    if (c === '\\' && inStr) { esc = true; continue; }
+    if (c === '"') { inStr = !inStr; continue; }
+    if (inStr) continue;
+    if (c === '{') depth++;
+    else if (c === '}' && --depth === 0) {
+      try { return JSON.parse(html.slice(start, i + 1)); } catch { return null; }
+    }
+  }
+  return null;
+}
 
-  const result = await scrape(itemId, {
-    reviewsCount: 0,
-    puppeteerOptions: {
-      executablePath: '/usr/bin/chromium',
-      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
-    },
-    timeout: 60000,
-  });
+function parseAliRunParams(html) {
+  const rp = extractBracedJson(html, 'window.runParams = ') ||
+             extractBracedJson(html, 'window.runParams=');
+  if (!rp) return null;
 
-  if (!result?.title) throw new Error('AliExpress scraper returned no product data');
+  const d = rp.data || rp;
+  const title = (d.pageModule || {}).title || null;
+  if (!title) return null;
 
-  const price = result.salePrice?.min?.value != null ? parseFloat(result.salePrice.min.value) : null;
-  const origPrice = result.originalPrice?.min?.value != null ? parseFloat(result.originalPrice.min.value) : null;
-  const currency = result.salePrice?.min?.currency || result.currencyInfo?.currencyCode || 'USD';
+  const priceModule = d.priceModule || {};
+  const skuModule = d.skuModule || {};
+  const imageModule = d.imageModule || {};
+  const storeModule = d.storeModule || {};
+  const quantityModule = d.quantityModule || {};
+  const currency = priceModule.currencyCode || 'USD';
+
+  let price = null;
+  // For variant products, take minimum sale price across all SKUs
+  if (Array.isArray(skuModule.skuPriceList) && skuModule.skuPriceList.length) {
+    for (const sku of skuModule.skuPriceList) {
+      const v = sku.skuVal || {};
+      const p = v.actSkuCalPrice != null ? parseFloat(v.actSkuCalPrice)
+              : v.skuActivityAmount?.value != null ? Number(v.skuActivityAmount.value)
+              : v.skuAmount?.value != null ? Number(v.skuAmount.value) : null;
+      if (p != null && !isNaN(p)) price = price == null ? p : Math.min(price, p);
+    }
+  }
+  if (price == null) {
+    price = priceModule.minActivityPrice?.value != null ? Number(priceModule.minActivityPrice.value)
+          : priceModule.minAmount?.value != null ? Number(priceModule.minAmount.value)
+          : parsePrice(priceModule.formatedPrice || '');
+  }
+
+  const origPrice = priceModule.maxAmount?.value != null ? Number(priceModule.maxAmount.value) : null;
 
   return {
-    title: result.title,
-    price: isNaN(price) ? null : price,
+    title,
+    price: price != null && !isNaN(price) ? price : null,
     originalPrice: (origPrice != null && !isNaN(origPrice) && price != null && origPrice > price) ? origPrice : null,
     currency,
-    sellerName: result.storeInfo?.name || null,
+    sellerName: storeModule.storeName || null,
     isAmazonDirect: false,
     isPrime: false,
-    inStock: (result.quantity?.available ?? 1) > 0,
-    imageUrl: result.images?.[0] || null,
+    inStock: (quantityModule.totalAvailQuantity ?? 1) > 0,
+    imageUrl: imageModule.imagePathList?.[0] || imageModule.summImagePathList?.[0] || null,
   };
+}
+
+function parseAliNextData(html) {
+  const m = html.match(/<script[^>]*id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
+  if (!m) return null;
+  let nd;
+  try { nd = JSON.parse(m[1]); } catch { return null; }
+
+  const pp = nd?.props?.pageProps || {};
+  const prod = pp.product || pp.itemInfo?.item || pp.data?.product || null;
+  if (!prod) return null;
+
+  const title = prod.title || prod.name || null;
+  if (!title) return null;
+
+  const rawPrice = prod.salePrice?.formattedPrice || prod.priceInfo?.price?.value || prod.price || null;
+  const price = rawPrice != null ? parsePrice(String(rawPrice)) : null;
+
+  return {
+    title,
+    price,
+    originalPrice: null,
+    currency: 'USD',
+    sellerName: prod.store?.name || null,
+    isAmazonDirect: false,
+    isPrime: false,
+    inStock: true,
+    imageUrl: prod.images?.[0] || prod.imageUrl || null,
+  };
+}
+
+function parseAliMeta($, html) {
+  const title = $('meta[property="og:title"]').attr('content') ||
+                $('title').first().text().replace(/\s*[-|–].*$/, '').trim() || null;
+  if (!title) return null;
+
+  const imageUrl = $('meta[property="og:image"]').attr('content') || null;
+  const m = html.match(/US\s*\$\s*(\d+(?:\.\d{1,2})?)/i) ||
+            html.match(/\$\s*(\d+(?:\.\d{1,2})?)/);
+  const price = m ? parseFloat(m[1]) : null;
+
+  return {
+    title,
+    price,
+    originalPrice: null,
+    currency: 'USD',
+    sellerName: null,
+    isAmazonDirect: false,
+    isPrime: false,
+    inStock: true,
+    imageUrl,
+  };
+}
+
+async function scrapeAliExpress(url, zenrowsApiKey) {
+  const key = zenrowsApiKey || process.env.ZENROWS_API_KEY;
+  if (!key) throw new Error('Zenrows API key is not configured — add it in Settings');
+
+  console.log(`[aliexpress] fetching via Zenrows: ${url}`);
+  let lastError;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) await new Promise(r => setTimeout(r, 3000 * attempt));
+    try {
+      const { data: html, status } = await axios.get('https://api.zenrows.com/v1/', {
+        params: { apikey: key, url, js_render: 'true', wait: '2000' },
+        timeout: 60000,
+        maxRedirects: 5,
+      });
+
+      if (status !== 200) throw new Error(`Zenrows returned HTTP ${status}`);
+
+      const $ = cheerio.load(html);
+
+      // Strategy 1: JSON-LD structured data
+      const ld = parseJsonLd($);
+      if (ld?.title && ld?.price != null) {
+        return { ...ld, isAmazonDirect: false, isPrime: false };
+      }
+
+      // Strategy 2: window.runParams embedded JS object
+      const rp = parseAliRunParams(html);
+      if (rp?.title) return rp;
+
+      // Strategy 3: __NEXT_DATA__ (Next.js SSR)
+      const nd = parseAliNextData(html);
+      if (nd?.title) return nd;
+
+      // Strategy 4: og: meta tags + regex price scan
+      const meta = parseAliMeta($, html);
+      if (meta?.title) return meta;
+
+      throw new Error('Could not extract product data from AliExpress page');
+    } catch (err) {
+      lastError = err;
+      console.error(`[aliexpress] attempt ${attempt + 1} failed: ${err.message}`);
+    }
+  }
+  throw lastError || new Error('AliExpress scraping via Zenrows failed');
 }
 
 module.exports = { scrapeAmazonSA, scrapeAliExpress, normalizeUrl, extractASIN };

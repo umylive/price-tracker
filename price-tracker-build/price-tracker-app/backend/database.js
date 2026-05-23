@@ -83,6 +83,8 @@ insertSetting.run('telegram_chat_id', '');
 insertSetting.run('check_interval', '60');
 insertSetting.run('notify_price_drop', '1');
 insertSetting.run('notify_back_in_stock', '1');
+insertSetting.run('zenrows_api_key', '');
+insertSetting.run('aliexpress_check_interval', '180');
 
 // Add currency column to notifications if it doesn't exist (migration)
 const hasCurrencyCol = db.prepare("PRAGMA table_info(notifications)").all().some(c => c.name === 'currency');

@@ -5,7 +5,6 @@ services:
     restart: unless-stopped
     ports:
       - "8766:3000"
-    shm_size: '256m'
     volumes:
       - /mnt/user/appdata/price-tracker:/data
     environment:
@@ -13,3 +12,4 @@ services:
       - PORT=3000
       - DATA_DIR=/data
       - TELEGRAM_BOT_TOKEN=
+      - ZENROWS_API_KEY=

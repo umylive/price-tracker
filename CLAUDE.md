@@ -61,11 +61,11 @@ price-tracker-build/price-tracker-app/
 **Scraper** (`scraper.js`): Two scrapers — `scrapeAmazonSA` and `scrapeAliExpress` — both use `axios` with rotating user agents and browser-like headers, retry 3× with backoff, and return `{ title, price, originalPrice, currency, sellerName, isAmazonDirect, isPrime, inStock, imageUrl }`.
 
 - **Amazon SA**: tries JSON-LD structured data first, falls back to CSS selector parsing. Uses the English URL prefix (`/-/en/dp/ASIN`) for consistent content and Western numerals. CAPTCHA detection breaks the retry loop immediately.
-- **AliExpress**: five cascading strategies in order — (1) JSON-LD, (2) `window.runParams` embedded JSON via stack-based brace extraction, (3) `__NEXT_DATA__` (Next.js), (4) `og:` meta tags + regex price scan, (5) page `<title>` + raw currency-string scan as last resort. For variant/SKU products, strategy 2 iterates `skuModule.skuPriceList` and takes the minimum sale price. Scrapes `www.aliexpress.com` in English, so prices are **USD** — the frontend shows an approximate SAR conversion (`× 3.75`). `isAmazonDirect` and `isPrime` are always `false` for AliExpress items.
+- **AliExpress**: routes requests through **Zenrows** (`https://api.zenrows.com/v1/`) with `js_render=true` to bypass IP-based bot detection. Four cascading strategies: (1) JSON-LD, (2) `window.runParams` embedded JSON via stack-based brace extraction, (3) `__NEXT_DATA__` (Next.js SSR), (4) `og:` meta tags + regex price scan. For variant/SKU products, strategy 2 iterates `skuModule.skuPriceList` and takes the minimum sale price. Prices are **USD** — the frontend shows an approximate SAR conversion. `isAmazonDirect` and `isPrime` are always `false` for AliExpress items. The Zenrows API key is read from `process.env.ZENROWS_API_KEY` or the `zenrows_api_key` setting.
 
 **`normalizeUrl(input)`** in `scraper.js`: accepts a full amazon.sa URL, a bare 10-char ASIN, or any `aliexpress.com` URL. Returns `{ url, asin, store }` where `store` is `'amazon_sa'` or `'aliexpress'`. Amazon always normalises to `https://www.amazon.sa/-/en/dp/{ASIN}`; AliExpress normalises to `https://www.aliexpress.com/item/{id}.html` (strips all query params and locale subdomains).
 
-**Scheduler** (`scheduler.js`): Uses `node-cron` with an interval stored in `settings.check_interval` (minutes). `restartScheduler()` rebuilds the cron expression when the interval changes. `checkItem()` routes to the correct scraper by `item.store`. Checks items sequentially with a **60-second delay between each item** to avoid rate limiting.
+**Scheduler** (`scheduler.js`): Two independent `node-cron` tasks — one for `amazon_sa` items (interval from `settings.check_interval`) and one for `aliexpress` items (interval from `settings.aliexpress_check_interval`, default 180 min / 3 h). `restartScheduler()` rebuilds both tasks. `checkItem()` routes to the correct scraper by `item.store`, reads the Zenrows key from settings for AliExpress items. Items within each store run sequentially with a **60-second delay** to avoid rate limiting. `runAllChecks()` runs all active items across both stores (used by the "Check All Now" button).
 
 **Telegram notifications**: Bot token is read from `process.env.TELEGRAM_BOT_TOKEN` first, falling back to the `settings` table. Chat ID is always read from the `settings` table. Uses the Bot API directly via `fetch` with HTML-formatted messages. Notification message builders (`buildDropMsg`, `buildStockMsg`) are store-aware — AliExpress items show the AliExpress seller name instead of Amazon-specific text. Notifications fire when:
 - Price drops by ≥ `items.notify_drop_percent` (default 5%), OR price hits `items.target_price`
@@ -94,13 +94,14 @@ The `relativeTime()` helper in `frontend/index.html` already does this.
 | `DATA_DIR` | `/data` | SQLite DB root |
 | `TZ` | — | Timezone (docker-compose sets `Asia/Riyadh`) |
 | `TELEGRAM_BOT_TOKEN` | — | Optional — takes priority over the value stored in the settings table |
+| `ZENROWS_API_KEY` | — | Optional — takes priority over the `zenrows_api_key` setting; required for AliExpress scraping |
 
 ## Database Schema
 
 - `users` → `items` (user_id FK) → `price_history` (item_id FK)
 - `items` → `notifications` (item_id FK)
 - `sessions`, `login_attempts` — auth only
-- `settings` — key/value store: `telegram_bot_token`, `telegram_chat_id`, `check_interval`, `notify_price_drop`, `notify_back_in_stock`
+- `settings` — key/value store: `telegram_bot_token`, `telegram_chat_id`, `check_interval`, `aliexpress_check_interval`, `notify_price_drop`, `notify_back_in_stock`, `zenrows_api_key`
 
 ## API Surface
 
