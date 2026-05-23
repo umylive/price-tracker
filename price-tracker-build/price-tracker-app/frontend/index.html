@@ -320,12 +320,11 @@ function renderDashboard() {
 }
 
 function storeLabel(item) {
-  if (item.store === 'aliexpress') return 'AliExpress';
   return 'Amazon SA';
 }
 
 function itemCurrency(item) {
-  return item.latest?.currency || (item.store === 'aliexpress' ? 'USD' : 'SAR');
+  return item.latest?.currency || 'SAR';
 }
 
 function sortItems(items) {
@@ -364,7 +363,7 @@ function renderEmpty() {
   return `<div class="empty">
     <div class="empty-icon">📦</div>
     <h2>No items yet</h2>
-    <p>Add products from Amazon Saudi Arabia or AliExpress to start tracking their prices.</p>
+    <p>Add products from Amazon Saudi Arabia to start tracking their prices.</p>
     <button class="btn btn-primary" data-action="open-add-item">+ Add Your First Item</button>
   </div>`;
 }
@@ -467,8 +466,8 @@ function openAddItemSheet() {
     <div id="add-msg"></div>
     <div class="form-group">
       <label>Product URL or ASIN *</label>
-      <input type="text" id="item-input" placeholder="amazon.sa URL / ASIN  or  aliexpress.com URL" autocomplete="off">
-      <div class="hint">Amazon SA: paste URL or 10-char ASIN. AliExpress: paste the product page URL.</div>
+      <input type="text" id="item-input" placeholder="amazon.sa URL or ASIN" autocomplete="off">
+      <div class="hint">Paste an Amazon SA product URL, or just the 10-character ASIN.</div>
     </div>
     <div class="form-group">
       <label>Name (optional — auto-detected)</label>
@@ -544,11 +543,9 @@ async function openHistorySheet(itemId) {
 function renderHistorySheet(item, allHistory, validHistory) {
   const lowestPrice = validHistory.length ? Math.min(...validHistory.map(h => h.price)) : null;
 
-  const historyCur = validHistory[0]?.currency || (item.store === 'aliexpress' ? 'USD' : 'SAR');
-  const storeLink = item.store === 'aliexpress' ? 'View on AliExpress ↗' : 'View on Amazon ↗';
-  const itemIdLabel = item.store === 'aliexpress'
-    ? `Item ID: ${item.url.match(/\/item\/(\d+)/)?.[1] || '—'}`
-    : `ASIN: ${item.asin || '—'}`;
+  const historyCur = validHistory[0]?.currency || 'SAR';
+  const storeLink = 'View on Amazon ↗';
+  const itemIdLabel = `ASIN: ${item.asin || '—'}`;
 
   document.getElementById('sheet-title').textContent = item.name;
   document.getElementById('sheet-body').innerHTML = `

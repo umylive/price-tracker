@@ -1,6 +1,6 @@
 const cron = require('node-cron');
 const db = require('./database');
-const { scrapeAmazonSA, scrapeAliExpress } = require('./scraper');
+const { scrapeAmazonSA } = require('./scraper');
 
 let currentTask = null;
 
@@ -30,11 +30,7 @@ async function checkItem(item) {
   console.log(`[check] ${item.name}`);
   let scraped;
   try {
-    if (item.store === 'aliexpress') {
-      scraped = await scrapeAliExpress(item.url);
-    } else {
-      scraped = await scrapeAmazonSA(item.url);
-    }
+    scraped = await scrapeAmazonSA(item.url);
   } catch (err) {
     db.prepare("INSERT INTO price_history (item_id, error, in_stock) VALUES (?, ?, 0)").run(item.id, err.message);
     db.prepare("UPDATE items SET last_checked_at = datetime('now') WHERE id = ?").run(item.id);
