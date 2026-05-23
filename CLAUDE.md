@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**Price Tracker** is a self-hosted product price tracker for **Amazon Saudi Arabia** (amazon.sa), designed to run on Unraid via Docker. Users add items by URL or ASIN, the app scrapes prices on a schedule, stores historical data, and sends Telegram notifications on price drops or restock events.
+**Price Tracker** is a self-hosted price tracker for **Amazon Saudi Arabia** (amazon.sa), designed to run on Unraid via Docker. Users add items by URL or ASIN, the app scrapes prices on a schedule, stores historical data, and sends Telegram notifications on price drops or restock events.
 
 ## Running the App
 
@@ -32,7 +32,7 @@ Deployed to Unraid by pulling from GHCR:
 ```
 ghcr.io/umylive/price-tracker:latest
 ```
-Every push to `main` touching `price-tracker-build/**` or `.github/workflows/docker-build.yml` triggers the workflow, which builds `linux/amd64` and pushes three tags (`latest`, short SHA, timestamp) via `docker/metadata-action`. Layer caching (`type=gha`) is enabled. Also manually triggerable via `workflow_dispatch` — use this if the build doesn't fire on the first push to a new repo (a known GitHub quirk).
+Every push to `main` touching `price-tracker-build/**` or `.github/workflows/docker-build.yml` triggers the workflow, which builds `linux/amd64` and pushes three tags (`latest`, short SHA, timestamp) via `docker/metadata-action`. Layer caching (`type=gha`) is enabled. Also manually triggerable via `workflow_dispatch` — useful if the build doesn't fire on the first push to a new repo (a known GitHub quirk).
 
 ## Architecture
 
@@ -42,7 +42,7 @@ price-tracker-build/price-tracker-app/
 │   ├── server.js      # All Express routes
 │   ├── database.js    # SQLite schema, WAL mode, session cleanup
 │   ├── auth.js        # bcrypt, session cookies, rate limiting
-│   ├── scraper.js     # Amazon SA + AliExpress scrapers, normalizeUrl
+│   ├── scraper.js     # Amazon SA scraper + normalizeUrl
 │   └── scheduler.js   # node-cron price check loop + Telegram sender
 ├── frontend/
 │   ├── index.html     # Entire SPA — vanilla JS, Chart.js from CDN
@@ -56,23 +56,23 @@ price-tracker-build/price-tracker-app/
 
 ## Key Architectural Patterns
 
-**Auth**: Cookie-based sessions (30-day, httpOnly). First user to `/api/auth/register` becomes admin; registration then closes.
+**Auth**: Cookie-based sessions (30-day, httpOnly). First user to `/api/auth/register` becomes admin; registration then closes. Rate limiting: 5 failures → 15-min lockout per username+IP.
 
 **Scraper** (`scraper.js`): `scrapeAmazonSA` uses `axios` with rotating user agents and browser-like headers, retries 3× with backoff, and returns `{ title, price, originalPrice, currency, sellerName, isAmazonDirect, isPrime, inStock, imageUrl }`. Tries JSON-LD structured data first, falls back to CSS selector parsing. Uses the English URL prefix (`/-/en/dp/ASIN`) for consistent content and Western numerals. CAPTCHA detection breaks the retry loop immediately.
 
-**`normalizeUrl(input)`** in `scraper.js`: accepts a full amazon.sa URL or a bare 10-char ASIN. Returns `{ url, asin, store: 'amazon_sa' }`. Always normalises to `https://www.amazon.sa/-/en/dp/{ASIN}`. Returns `null` for non-Amazon URLs.
+**`normalizeUrl(input)`** in `scraper.js`: accepts a full amazon.sa URL or a bare 10-char ASIN. Returns `{ url, asin, store: 'amazon_sa' }`, always normalised to `https://www.amazon.sa/-/en/dp/{ASIN}`. Returns `null` for anything else (including aliexpress.com — not supported).
 
 **Scheduler** (`scheduler.js`): Single `node-cron` task with interval from `settings.check_interval` (minutes). `restartScheduler()` rebuilds it when the interval changes. Items run sequentially with a **60-second delay** between each to avoid rate limiting. `runAllChecks()` runs all active items (used by the "Check All Now" button).
 
-**Telegram notifications**: Bot token is read from `process.env.TELEGRAM_BOT_TOKEN` first, falling back to the `settings` table. Chat ID is always read from the `settings` table. Uses the Bot API directly via `fetch` with HTML-formatted messages. Notification message builders (`buildDropMsg`, `buildStockMsg`) are store-aware — AliExpress items show the AliExpress seller name instead of Amazon-specific text. Notifications fire when:
+**Telegram notifications**: Bot token is read from `process.env.TELEGRAM_BOT_TOKEN` first, falling back to the `settings` table. Chat ID is always from the `settings` table. Uses the Bot API directly via `fetch` with HTML-formatted messages. Fires when:
 - Price drops by ≥ `items.notify_drop_percent` (default 5%), OR price hits `items.target_price`
-- Item transitions from out-of-stock to in-stock (if enabled in settings)
+- Item transitions from out-of-stock to in-stock (if `notify_back_in_stock` is enabled)
 
-**Frontend state**: Single `state` object with `user`, `items`, `checking` (Set of item IDs being checked). `renderDashboard()` rewrites `#app` on every data change. Sheets (bottom drawers) use CSS transforms; only one sheet open at a time. Chart.js instance stored in `state.sheetChart` and destroyed before reopening. `storeLabel(item)` and `storeColor(item)` drive store-specific display (Amazon orange `#ff9900` vs AliExpress red `#e62e04`).
+**Frontend state**: Single `state` object with `user`, `items`, `checking` (Set of item IDs being checked). `renderDashboard()` rewrites `#app` on every data change. Sheets (bottom drawers) use CSS transforms; only one sheet open at a time. Chart.js instance stored in `state.sheetChart` and destroyed before reopening.
 
-**Seller detection**: `is_amazon_direct` in `price_history` is set to 1 when the merchant text contains "ships from and sold by amazon" or the seller name starts with "Amazon". Always 0 for AliExpress. Shown as a badge on each item card.
+**Seller detection**: `is_amazon_direct` in `price_history` is set to 1 when the merchant text contains "ships from and sold by amazon" or the seller name starts with "Amazon". Shown as a badge on each item card. Chart colours: blue for Amazon direct, orange for third-party.
 
-## SQLite timestamp gotcha
+## SQLite Timestamp Gotcha
 
 `datetime('now')` returns UTC as `YYYY-MM-DD HH:MM:SS` with no timezone indicator. JavaScript's `new Date()` treats such strings as **local time**, so always append `'Z'` before parsing:
 
@@ -113,11 +113,11 @@ The `relativeTime()` helper in `frontend/index.html` already does this.
 
 **Notifications**: `GET /api/notifications`
 
-## Adding More Stores
+## Adding Another Store
 
-To add Noon or another store:
-1. Add a `scrapeNoon(url)` function to `scraper.js` (model after `scrapeAliExpress`)
-2. Add store detection in `normalizeUrl()` based on domain
-3. Import and route in `checkItem()` in `scheduler.js` by `item.store` (the routing pattern is already there)
-4. Add `storeLabel`/`storeColor` cases in `frontend/index.html`
-5. Update the Add Item sheet hint text and the history sheet link/label logic
+To add Noon or another retailer:
+1. Add a `scrapeNoon(url)` function to `scraper.js` (model after `scrapeAmazonSA`)
+2. Add domain detection in `normalizeUrl()` returning `{ url, asin: null, store: 'noon' }`
+3. Route by `item.store` in `checkItem()` in `scheduler.js`
+4. Update `storeLabel(item)` and `storeColor(item)` in `frontend/index.html`
+5. Update the Add Item hint text and the history sheet link/label
