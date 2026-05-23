@@ -81,7 +81,7 @@ async function checkItem(item) {
     if (dropPct >= threshold || hitTarget) {
       const msg = buildDropMsg(item, scraped, prev.price, dropPct);
       if (await sendTelegram(botToken, chatId, msg)) {
-        db.prepare('INSERT INTO notifications (item_id, type, message, price) VALUES (?, ?, ?, ?)').run(item.id, 'price_drop', msg, scraped.price);
+        db.prepare('INSERT INTO notifications (item_id, type, message, price, currency) VALUES (?, ?, ?, ?, ?)').run(item.id, 'price_drop', msg, scraped.price, scraped.currency || 'SAR');
       }
     }
   }
@@ -90,7 +90,7 @@ async function checkItem(item) {
   if (settings.notify_back_in_stock === '1' && scraped.inStock && prev && !prev.in_stock) {
     const msg = buildStockMsg(item, scraped);
     if (await sendTelegram(botToken, chatId, msg)) {
-      db.prepare('INSERT INTO notifications (item_id, type, message, price) VALUES (?, ?, ?, ?)').run(item.id, 'back_in_stock', msg, scraped.price);
+      db.prepare('INSERT INTO notifications (item_id, type, message, price, currency) VALUES (?, ?, ?, ?, ?)').run(item.id, 'back_in_stock', msg, scraped.price, scraped.currency || 'SAR');
     }
   }
 }

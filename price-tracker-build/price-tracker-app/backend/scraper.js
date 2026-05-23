@@ -246,19 +246,15 @@ function tryParseRunParams(html) {
     // skuModule: iterate all variants (color/size options), take minimum sale price
     if (price == null && d.skuModule?.skuPriceList?.length) {
       let minPrice = null;
-      let skuCurrency = null;
       for (const sku of d.skuModule.skuPriceList) {
         const sv = sku.skuVal;
         const p = sv?.skuActivityAmount?.value ?? sv?.skuAmount?.value ?? null;
         if (p != null) {
           const n = parseFloat(p);
-          if (minPrice == null || n < minPrice) {
-            minPrice = n;
-            skuCurrency = sv?.skuActivityAmount?.currency ?? sv?.skuAmount?.currency ?? null;
-          }
+          if (minPrice == null || n < minPrice) minPrice = n;
         }
       }
-      if (minPrice != null) { price = minPrice; if (skuCurrency) { /* used below */ } }
+      if (minPrice != null) price = minPrice;
     }
 
     const currency = pm.minActivityAmount?.currency ?? pm.minAmount?.currency ?? pm.activityAmount?.currency ??

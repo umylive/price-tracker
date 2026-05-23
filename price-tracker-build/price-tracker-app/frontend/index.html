@@ -778,7 +778,7 @@ async function openNotificationsSheet() {
               <span>${new Date(n.sent_at).toLocaleString('en-SA')}</span>
             </div>
             <div class="notif-name">${escHtml(n.item_name)}</div>
-            ${n.price != null ? `<div class="notif-price">SAR ${fmtPrice(n.price)}</div>` : ''}
+            ${n.price != null ? `<div class="notif-price">${escHtml(n.currency || 'SAR')} ${fmtPrice(n.price)}</div>` : ''}
           </div>`).join('')}
       </div>`;
   } catch (e) {

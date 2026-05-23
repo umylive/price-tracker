@@ -84,6 +84,11 @@ insertSetting.run('check_interval', '60');
 insertSetting.run('notify_price_drop', '1');
 insertSetting.run('notify_back_in_stock', '1');
 
+// Add currency column to notifications if it doesn't exist (migration)
+const hasCurrencyCol = db.prepare("PRAGMA table_info(notifications)").all().some(c => c.name === 'currency');
+if (!hasCurrencyCol) {
+  db.exec("ALTER TABLE notifications ADD COLUMN currency TEXT DEFAULT 'SAR'");
+}
 
 function cleanupSessions() {
   db.prepare("DELETE FROM sessions WHERE expires_at < datetime('now')").run();
