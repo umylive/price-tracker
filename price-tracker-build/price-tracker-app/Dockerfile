@@ -1,6 +1,6 @@
 FROM node:20-alpine
 
-RUN apk add --no-cache tini python3 make g++
+RUN apk add --no-cache tini python3 make g++ chromium
 
 WORKDIR /app
 

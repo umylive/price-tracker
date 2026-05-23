@@ -380,82 +380,71 @@ function parseAliScriptBlobs(html) {
 }
 
 async function scrapeAliExpress(url) {
-  console.log(`[aliexpress] fetching: ${url}`);
-  let lastError;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    if (attempt > 0) await new Promise(r => setTimeout(r, 3000 * attempt));
-    try {
-      const { data: html, status } = await axios.get(url, {
-        headers: {
-          'User-Agent': getRandomUA(),
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-          'Accept-Language': 'en-US,en;q=0.9',
-          'Accept-Encoding': 'gzip, deflate, br',
-          'Connection': 'keep-alive',
-          'Upgrade-Insecure-Requests': '1',
-          'Sec-Fetch-Dest': 'document',
-          'Sec-Fetch-Mode': 'navigate',
-          'Sec-Fetch-Site': 'none',
-          'Cache-Control': 'max-age=0',
-        },
-        timeout: 30000,
-        maxRedirects: 5,
-      });
+  console.log(`[aliexpress] launching browser for: ${url}`);
+  const puppeteer = require('puppeteer-core');
+  let browser;
+  try {
+    browser = await puppeteer.launch({
+      executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium-browser',
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-accelerated-2d-canvas',
+        '--disable-gpu',
+        '--no-first-run',
+        '--no-zygote',
+      ],
+      headless: true,
+    });
 
-      if (status !== 200) throw new Error(`HTTP ${status}`);
+    const page = await browser.newPage();
+    await page.setUserAgent(getRandomUA());
+    await page.setViewport({ width: 1280, height: 800 });
+    await page.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9' });
 
-      const $ = cheerio.load(html);
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
 
-      // Diagnose what we're working with
-      const markers = {
-        cf: html.includes('cf-browser-verification') || html.includes('Just a moment'),
-        captcha: html.includes('captcha') || html.includes('_Captcha'),
-        runParams: html.includes('window.runParams'),
-        nextData: html.includes('__NEXT_DATA__'),
-        ld: html.includes('"@type":"Product"') || html.includes('"@type": "Product"'),
-        store: html.includes('window.__STORE__') || html.includes('window.__INITIAL_STATE__'),
-        subject: html.includes('"subject"'),
-        salePrice: html.includes('salePrice') || html.includes('sale_price'),
-      };
-      console.log(`[aliexpress] page ${html.length}b — ${JSON.stringify(markers)}`);
+    // Give JS time to render price/title into the DOM
+    await Promise.race([
+      page.waitForSelector('[class*="price"], .product-title-text', { timeout: 10000 }).catch(() => {}),
+      new Promise(r => setTimeout(r, 8000)),
+    ]);
 
-      if (markers.cf || markers.captcha) {
-        throw new Error('Bot/CAPTCHA page detected — AliExpress blocked the request');
-      }
+    const html = await page.content();
+    const $ = cheerio.load(html);
 
-      // Strategy 1: JSON-LD structured data
-      const ld = parseJsonLd($);
-      if (ld?.title && ld?.price != null) {
-        console.log('[aliexpress] parsed via JSON-LD');
-        return { ...ld, isAmazonDirect: false, isPrime: false };
-      }
+    const markers = {
+      runParams: html.includes('window.runParams'),
+      nextData: html.includes('__NEXT_DATA__'),
+      ld: html.includes('"@type":"Product"'),
+      salePrice: html.includes('salePrice'),
+      captcha: html.includes('captcha') || html.includes('_Captcha'),
+    };
+    console.log(`[aliexpress] rendered ${html.length}b — ${JSON.stringify(markers)}`);
 
-      // Strategy 2: window.runParams embedded JS object
-      const rp = parseAliRunParams(html);
-      if (rp?.title) { console.log('[aliexpress] parsed via runParams'); return rp; }
+    if (markers.captcha) throw new Error('CAPTCHA detected on rendered page');
 
-      // Strategy 3: __NEXT_DATA__ (Next.js SSR)
-      const nd = parseAliNextData(html);
-      if (nd?.title) { console.log('[aliexpress] parsed via NEXT_DATA'); return nd; }
+    const ld = parseJsonLd($);
+    if (ld?.title && ld?.price != null) { console.log('[aliexpress] via JSON-LD'); return { ...ld, isAmazonDirect: false, isPrime: false }; }
 
-      // Strategy 4: broader script blob scan (window.__STORE__ etc.)
-      const sb = parseAliScriptBlobs(html);
-      if (sb?.title) { console.log('[aliexpress] parsed via script blob'); return sb; }
+    const rp = parseAliRunParams(html);
+    if (rp?.title) { console.log('[aliexpress] via runParams'); return rp; }
 
-      // Strategy 5: og: meta tags + regex price scan
-      const meta = parseAliMeta($, html);
-      if (meta?.title) { console.log('[aliexpress] parsed via og:meta'); return meta; }
+    const nd = parseAliNextData(html);
+    if (nd?.title) { console.log('[aliexpress] via NEXT_DATA'); return nd; }
 
-      // Log a snippet to help diagnose unknown page structures
-      console.log('[aliexpress] parse failed — page snippet:', html.slice(0, 500).replace(/\s+/g, ' '));
-      throw new Error('Could not extract product data from AliExpress page');
-    } catch (err) {
-      lastError = err;
-      if (err.message.includes('Bot/CAPTCHA')) break;
-      console.error(`[aliexpress] attempt ${attempt + 1} failed: ${err.message}`);
-    }
+    const sb = parseAliScriptBlobs(html);
+    if (sb?.title) { console.log('[aliexpress] via script blob'); return sb; }
+
+    const meta = parseAliMeta($, html);
+    if (meta?.title) { console.log('[aliexpress] via og:meta'); return meta; }
+
+    console.log('[aliexpress] parse failed — snippet:', html.slice(0, 800).replace(/\s+/g, ' '));
+    throw new Error('Could not extract product data from AliExpress page');
+  } finally {
+    if (browser) await browser.close().catch(() => {});
   }
-  throw lastError || new Error('AliExpress scraping failed');
 }
 
 module.exports = { scrapeAmazonSA, scrapeAliExpress, normalizeUrl, extractASIN };
