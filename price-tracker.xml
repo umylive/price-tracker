@@ -1,0 +1,62 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>PriceTracker</Name>
+  <Repository>ghcr.io/umylive/price-tracker:latest</Repository>
+  <Registry>https://ghcr.io</Registry>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support/>
+  <Project/>
+  <Overview>Self-hosted Amazon SA price tracker. Add products by URL or ASIN, track price history, and receive Telegram alerts when prices drop or items come back in stock.</Overview>
+  <Category>Tools: Productivity:</Category>
+  <WebUI>http://[IP]:[PORT:8766]/</WebUI>
+  <TemplateURL/>
+  <Icon/>
+  <ExtraParams/>
+  <PostArgs/>
+  <CPUset/>
+  <DateInstalled/>
+  <DonateText/>
+  <DonateLink/>
+  <Description>Self-hosted Amazon Saudi Arabia price tracker. Monitors product prices on a configurable schedule, logs historical data, detects Amazon-direct vs third-party sellers, and sends Telegram notifications on price drops or restock events.</Description>
+  <Networking>
+    <Mode>bridge</Mode>
+    <Publish>
+      <Port>
+        <HostPort>8766</HostPort>
+        <ContainerPort>3000</ContainerPort>
+        <Protocol>tcp</Protocol>
+      </Port>
+    </Publish>
+  </Networking>
+  <Data>
+    <Volume>
+      <HostDir>/mnt/user/appdata/price-tracker</HostDir>
+      <ContainerDir>/data</ContainerDir>
+      <Mode>rw</Mode>
+    </Volume>
+  </Data>
+  <Environment>
+    <Variable>
+      <Value>Asia/Riyadh</Value>
+      <Name>TZ</Name>
+      <Mode/>
+    </Variable>
+    <Variable>
+      <Value>3000</Value>
+      <Name>PORT</Name>
+      <Mode/>
+    </Variable>
+    <Variable>
+      <Value>/data</Value>
+      <Name>DATA_DIR</Name>
+      <Mode/>
+    </Variable>
+  </Environment>
+  <Labels/>
+  <Config Name="WebUI Port" Target="3000" Default="8766" Mode="tcp" Description="Host port for web access" Type="Port" Display="always" Required="true" Mask="false">8766</Config>
+  <Config Name="Data Directory" Target="/data" Default="/mnt/user/appdata/price-tracker" Mode="rw" Description="Where the SQLite database is stored" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/price-tracker</Config>
+  <Config Name="Timezone" Target="TZ" Default="Asia/Riyadh" Mode="" Description="Container timezone" Type="Variable" Display="always" Required="false" Mask="false">Asia/Riyadh</Config>
+</Container>

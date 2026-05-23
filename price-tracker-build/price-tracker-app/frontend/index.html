@@ -1,0 +1,949 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Price Tracker</title>
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#0f172a">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --surface: #1e293b;
+      --surface2: #263348;
+      --border: #334155;
+      --accent: #3b82f6;
+      --accent-h: #2563eb;
+      --success: #22c55e;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --text: #f1f5f9;
+      --muted: #94a3b8;
+      --amazon: #ff9900;
+      --prime: #00a8e1;
+      --card-r: 14px;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 15px; }
+
+    /* ── Layout ── */
+    #app { display: flex; flex-direction: column; min-height: 100dvh; }
+    header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 0 16px; height: 56px; display: flex; align-items: center; gap: 12px; position: sticky; top: 0; z-index: 100; }
+    header h1 { font-size: 18px; font-weight: 700; flex: 1; display: flex; align-items: center; gap: 8px; }
+    header h1 span { font-size: 20px; }
+    main { flex: 1; padding: 16px; max-width: 1200px; margin: 0 auto; width: 100%; }
+
+    /* ── Buttons ── */
+    .btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; border-radius: 8px; border: none; font-size: 14px; font-weight: 500; cursor: pointer; transition: background .15s, opacity .15s; white-space: nowrap; }
+    .btn:disabled { opacity: .5; cursor: not-allowed; }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-primary:hover:not(:disabled) { background: var(--accent-h); }
+    .btn-ghost { background: transparent; color: var(--muted); border: 1px solid var(--border); }
+    .btn-ghost:hover:not(:disabled) { background: var(--surface2); color: var(--text); }
+    .btn-danger { background: transparent; color: var(--danger); border: 1px solid var(--danger)33; }
+    .btn-danger:hover:not(:disabled) { background: var(--danger)22; }
+    .btn-sm { padding: 5px 10px; font-size: 13px; }
+    .btn-icon { padding: 8px; border-radius: 8px; border: none; background: transparent; color: var(--muted); cursor: pointer; font-size: 18px; line-height: 1; }
+    .btn-icon:hover { background: var(--surface2); color: var(--text); }
+
+    /* ── Cards ── */
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--card-r); overflow: hidden; display: flex; flex-direction: column; transition: border-color .2s; }
+    .card:hover { border-color: var(--accent)66; }
+    .card.inactive { opacity: .6; }
+
+    .card-top { display: flex; gap: 12px; padding: 14px 14px 0; }
+    .card-img { width: 80px; height: 80px; border-radius: 8px; object-fit: contain; background: var(--surface2); flex-shrink: 0; }
+    .card-img-placeholder { width: 80px; height: 80px; border-radius: 8px; background: var(--surface2); flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 28px; }
+    .card-meta { flex: 1; min-width: 0; }
+    .card-store { font-size: 11px; font-weight: 600; color: var(--amazon); letter-spacing: .5px; text-transform: uppercase; margin-bottom: 4px; }
+    .card-name { font-weight: 600; font-size: 14px; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+
+    .card-price-row { padding: 12px 14px 0; display: flex; align-items: baseline; gap: 10px; }
+    .card-price { font-size: 26px; font-weight: 700; color: var(--text); }
+    .card-currency { font-size: 14px; color: var(--muted); margin-right: 2px; }
+    .card-change { font-size: 13px; font-weight: 600; padding: 2px 7px; border-radius: 20px; }
+    .card-change.down { background: var(--success)22; color: var(--success); }
+    .card-change.up { background: var(--danger)22; color: var(--danger); }
+    .card-change.flat { background: var(--muted)22; color: var(--muted); }
+    .card-was { font-size: 12px; color: var(--muted); text-decoration: line-through; }
+
+    .card-badges { padding: 8px 14px 0; display: flex; gap: 6px; flex-wrap: wrap; }
+    .badge { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 20px; display: inline-flex; align-items: center; gap: 4px; }
+    .badge-amazon { background: var(--amazon)22; color: var(--amazon); }
+    .badge-third { background: var(--muted)22; color: var(--muted); }
+    .badge-prime { background: var(--prime)22; color: var(--prime); }
+    .badge-instock { background: var(--success)22; color: var(--success); }
+    .badge-outstock { background: var(--danger)22; color: var(--danger); }
+    .badge-error { background: var(--danger)22; color: var(--danger); }
+    .badge-inactive { background: var(--muted)22; color: var(--muted); }
+
+    .card-stats { padding: 10px 14px 0; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+    .stat-item { }
+    .stat-label { font-size: 11px; color: var(--muted); }
+    .stat-val { font-size: 13px; font-weight: 600; }
+    .stat-val.low { color: var(--success); }
+    .stat-val.high { color: var(--danger); }
+
+    .card-checked { padding: 6px 14px 0; font-size: 11px; color: var(--muted); }
+
+    .card-actions { padding: 12px 14px 14px; display: flex; gap: 6px; margin-top: auto; flex-wrap: wrap; }
+    .card-actions .btn { flex: 1; justify-content: center; }
+
+    /* ── Error state ── */
+    .card-error { padding: 8px 14px; font-size: 12px; color: var(--danger); background: var(--danger)11; border-top: 1px solid var(--danger)33; margin-top: 10px; border-radius: 0 0 4px 4px; }
+
+    /* ── Empty state ── */
+    .empty { text-align: center; padding: 64px 24px; color: var(--muted); }
+    .empty-icon { font-size: 56px; margin-bottom: 16px; }
+    .empty h2 { font-size: 20px; font-weight: 600; color: var(--text); margin-bottom: 8px; }
+    .empty p { margin-bottom: 24px; }
+
+    /* ── Sheet / Modal ── */
+    .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 200; display: none; }
+    .overlay.open { display: block; }
+    .sheet { position: fixed; bottom: 0; left: 0; right: 0; background: var(--surface); border-radius: 20px 20px 0 0; z-index: 201; max-height: 92dvh; display: flex; flex-direction: column; transform: translateY(100%); transition: transform .3s cubic-bezier(.32,0,.67,0); }
+    .sheet.open { transform: translateY(0); }
+    .sheet-handle { width: 36px; height: 4px; background: var(--border); border-radius: 2px; margin: 12px auto 4px; flex-shrink: 0; }
+    .sheet-header { display: flex; align-items: center; padding: 8px 16px 12px; gap: 10px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+    .sheet-title { font-size: 17px; font-weight: 700; flex: 1; }
+    .sheet-body { overflow-y: auto; padding: 16px; flex: 1; }
+    .sheet-footer { padding: 12px 16px; border-top: 1px solid var(--border); display: flex; gap: 8px; flex-shrink: 0; }
+
+    /* ── Forms ── */
+    .form-group { margin-bottom: 16px; }
+    .form-group label { display: block; font-size: 13px; font-weight: 600; color: var(--muted); margin-bottom: 6px; }
+    .form-group input, .form-group select, .form-group textarea {
+      width: 100%; padding: 10px 12px; background: var(--surface2); border: 1px solid var(--border);
+      border-radius: 8px; color: var(--text); font-size: 14px; outline: none; font-family: inherit;
+    }
+    .form-group input:focus, .form-group select:focus, .form-group textarea:focus { border-color: var(--accent); }
+    .form-group .hint { font-size: 12px; color: var(--muted); margin-top: 4px; }
+    .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .form-toggle { display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: var(--surface2); border-radius: 8px; border: 1px solid var(--border); cursor: pointer; }
+    .form-toggle input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--accent); cursor: pointer; }
+    .form-toggle span { font-size: 14px; }
+
+    /* ── Auth ── */
+    .auth-wrap { display: flex; align-items: center; justify-content: center; min-height: 100dvh; padding: 24px; }
+    .auth-box { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 32px; width: 100%; max-width: 400px; }
+    .auth-logo { font-size: 40px; text-align: center; margin-bottom: 8px; }
+    .auth-title { font-size: 22px; font-weight: 700; text-align: center; margin-bottom: 4px; }
+    .auth-sub { font-size: 14px; color: var(--muted); text-align: center; margin-bottom: 24px; }
+
+    /* ── Loading / Error ── */
+    .loading { display: flex; align-items: center; justify-content: center; padding: 32px; color: var(--muted); gap: 10px; }
+    .spinner { width: 20px; height: 20px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .7s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .alert { padding: 10px 14px; border-radius: 8px; font-size: 13px; margin-bottom: 12px; }
+    .alert-error { background: var(--danger)22; color: var(--danger); border: 1px solid var(--danger)33; }
+    .alert-success { background: var(--success)22; color: var(--success); border: 1px solid var(--success)33; }
+    .alert-info { background: var(--accent)22; color: var(--accent); border: 1px solid var(--accent)33; }
+
+    /* ── Chart ── */
+    .chart-wrap { position: relative; height: 260px; margin: 16px 0; }
+    .chart-legend { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 8px; }
+    .chart-legend-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+    .chart-legend-dot { width: 10px; height: 10px; border-radius: 50%; }
+
+    /* ── History table ── */
+    .history-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .history-table th { padding: 8px 10px; text-align: left; color: var(--muted); font-weight: 600; border-bottom: 1px solid var(--border); white-space: nowrap; }
+    .history-table td { padding: 8px 10px; border-bottom: 1px solid var(--border)55; vertical-align: middle; }
+    .history-table tr:last-child td { border-bottom: none; }
+    .history-table tr.error-row td { color: var(--danger); font-size: 12px; }
+    .seller-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; }
+    .seller-dot.amazon { background: var(--amazon); }
+    .seller-dot.third { background: var(--muted); }
+
+    /* ── Notifications ── */
+    .notif-list { display: flex; flex-direction: column; gap: 10px; }
+    .notif-item { background: var(--surface2); border-radius: 10px; padding: 12px 14px; border-left: 3px solid var(--accent); }
+    .notif-item.price_drop { border-left-color: var(--success); }
+    .notif-item.back_in_stock { border-left-color: var(--prime); }
+    .notif-meta { font-size: 11px; color: var(--muted); margin-bottom: 4px; display: flex; gap: 8px; }
+    .notif-name { font-weight: 600; font-size: 13px; margin-bottom: 4px; }
+    .notif-price { font-size: 13px; color: var(--text); }
+
+    /* ── Settings ── */
+    .settings-section { margin-bottom: 24px; }
+    .settings-section h3 { font-size: 13px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 12px; }
+    .masked-val { font-family: monospace; background: var(--surface2); padding: 2px 6px; border-radius: 4px; font-size: 12px; }
+
+    /* ── Responsive ── */
+    @media (max-width: 600px) {
+      .form-row { grid-template-columns: 1fr; }
+      .grid { grid-template-columns: 1fr; }
+      .card-stats { grid-template-columns: 1fr 1fr; }
+      main { padding: 12px; }
+    }
+  </style>
+</head>
+<body>
+<div id="app"></div>
+<div class="overlay" id="overlay"></div>
+<div class="sheet" id="sheet">
+  <div class="sheet-handle"></div>
+  <div class="sheet-header">
+    <div class="sheet-title" id="sheet-title"></div>
+    <button class="btn-icon" data-action="close-sheet">✕</button>
+  </div>
+  <div class="sheet-body" id="sheet-body"></div>
+  <div class="sheet-footer" id="sheet-footer"></div>
+</div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────────
+const state = {
+  user: null,
+  items: [],
+  checking: new Set(),
+  sheetChart: null,
+};
+
+// ── API ────────────────────────────────────────────────────────────────────────
+async function api(method, path, body) {
+  const opts = { method, headers: {} };
+  if (body !== undefined) {
+    opts.headers['Content-Type'] = 'application/json';
+    opts.body = JSON.stringify(body);
+  }
+  const res = await fetch(path, opts);
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
+  return json;
+}
+
+// ── Utilities ──────────────────────────────────────────────────────────────────
+function relativeTime(iso) {
+  if (!iso) return 'Never';
+  const diff = Date.now() - new Date(iso).getTime();
+  const m = Math.floor(diff / 60000);
+  if (m < 1) return 'Just now';
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
+
+function fmtPrice(n) {
+  if (n == null) return '—';
+  return n.toLocaleString('en-SA', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function escHtml(s) {
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function priceDiff(current, prev) {
+  if (current == null || prev == null || prev === 0) return null;
+  return ((current - prev) / prev) * 100;
+}
+
+// ── Sheet ──────────────────────────────────────────────────────────────────────
+function openSheet(title, bodyHtml, footerHtml = '') {
+  document.getElementById('sheet-title').textContent = title;
+  document.getElementById('sheet-body').innerHTML = bodyHtml;
+  document.getElementById('sheet-footer').innerHTML = footerHtml;
+  document.getElementById('overlay').classList.add('open');
+  document.getElementById('sheet').classList.add('open');
+}
+
+function closeSheet() {
+  if (state.sheetChart) { state.sheetChart.destroy(); state.sheetChart = null; }
+  document.getElementById('overlay').classList.remove('open');
+  document.getElementById('sheet').classList.remove('open');
+  document.getElementById('sheet-body').innerHTML = '';
+  document.getElementById('sheet-footer').innerHTML = '';
+}
+
+// ── Render: Auth ───────────────────────────────────────────────────────────────
+function renderAuth(mode = 'login') {
+  const isLogin = mode === 'login';
+  document.getElementById('app').innerHTML = `
+    <div class="auth-wrap">
+      <div class="auth-box">
+        <div class="auth-logo">🏷️</div>
+        <div class="auth-title">Price Tracker</div>
+        <div class="auth-sub">${isLogin ? 'Sign in to your account' : 'Create your account'}</div>
+        <div id="auth-msg"></div>
+        <form id="auth-form">
+          <div class="form-group">
+            <label>Username</label>
+            <input type="text" id="auth-username" autocomplete="username" placeholder="Enter username" required>
+          </div>
+          <div class="form-group">
+            <label>Password</label>
+            <input type="password" id="auth-password" autocomplete="${isLogin ? 'current-password' : 'new-password'}" placeholder="Enter password" required>
+          </div>
+          <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center" id="auth-btn">
+            ${isLogin ? 'Sign In' : 'Create Account'}
+          </button>
+        </form>
+        ${isLogin
+          ? `<p style="text-align:center;margin-top:16px;font-size:13px;color:var(--muted)">
+              First time? <a href="#" data-action="switch-auth" data-mode="register" style="color:var(--accent)">Create account</a>
+             </p>`
+          : `<p style="text-align:center;margin-top:16px;font-size:13px;color:var(--muted)">
+              Already have an account? <a href="#" data-action="switch-auth" data-mode="login" style="color:var(--accent)">Sign in</a>
+             </p>`
+        }
+      </div>
+    </div>`;
+}
+
+// ── Render: Dashboard ──────────────────────────────────────────────────────────
+function renderDashboard() {
+  const items = state.items;
+  document.getElementById('app').innerHTML = `
+    <div id="app-inner">
+      <header>
+        <h1><span>🏷️</span> Price Tracker</h1>
+        <button class="btn btn-ghost btn-sm" data-action="open-notifications" title="Notifications">🔔</button>
+        <button class="btn btn-ghost btn-sm" data-action="open-settings" title="Settings">⚙️</button>
+        <button class="btn btn-primary btn-sm" data-action="open-add-item">+ Add Item</button>
+        <button class="btn-icon" data-action="logout" title="Logout" style="color:var(--muted);font-size:16px">⏏</button>
+      </header>
+      <main>
+        ${items.length === 0 ? renderEmpty() : `<div class="grid">${items.map(renderCard).join('')}</div>`}
+      </main>
+    </div>`;
+}
+
+function renderEmpty() {
+  return `<div class="empty">
+    <div class="empty-icon">📦</div>
+    <h2>No items yet</h2>
+    <p>Add products from Amazon Saudi Arabia to start tracking their prices.</p>
+    <button class="btn btn-primary" data-action="open-add-item">+ Add Your First Item</button>
+  </div>`;
+}
+
+function renderCard(item) {
+  const p = item.latest;
+  const currentPrice = p?.price ?? null;
+  const diff = priceDiff(currentPrice, item.prevPrice);
+  const inStock = p?.in_stock ?? true;
+  const hasError = p?.error;
+
+  let changeHtml = '';
+  if (diff != null) {
+    const cls = diff < -0.1 ? 'down' : diff > 0.1 ? 'up' : 'flat';
+    const sym = diff < -0.1 ? '↓' : diff > 0.1 ? '↑' : '→';
+    changeHtml = `<span class="card-change ${cls}">${sym} ${Math.abs(diff).toFixed(1)}%</span>`;
+  }
+
+  const sellerBadge = p && !p.error
+    ? (p.is_amazon_direct
+        ? `<span class="badge badge-amazon">✅ Amazon SA</span>`
+        : `<span class="badge badge-third">🏪 ${escHtml(p.seller_name || 'Seller')}</span>`)
+    : '';
+
+  const stockBadge = hasError
+    ? `<span class="badge badge-error">⚠ Check failed</span>`
+    : (inStock
+        ? `<span class="badge badge-instock">● In Stock</span>`
+        : `<span class="badge badge-outstock">● Out of Stock</span>`);
+
+  const primeBadge = p?.is_prime ? `<span class="badge badge-prime">⚡ Prime</span>` : '';
+  const inactiveBadge = !item.active ? `<span class="badge badge-inactive">Paused</span>` : '';
+  const targetBadge = item.target_price && currentPrice && currentPrice <= item.target_price
+    ? `<span class="badge badge-instock">🎯 At Target</span>` : '';
+
+  const imageHtml = item.image_url
+    ? `<img class="card-img" src="${escHtml(item.image_url)}" alt="" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">`
+    : '';
+  const placeholderStyle = item.image_url ? 'display:none' : '';
+
+  const isChecking = state.checking.has(item.id);
+
+  return `<div class="card${item.active ? '' : ' inactive'}" data-id="${item.id}">
+    <div class="card-top">
+      ${imageHtml}
+      <div class="card-img-placeholder" style="${placeholderStyle}">📦</div>
+      <div class="card-meta">
+        <div class="card-store">Amazon SA</div>
+        <div class="card-name">${escHtml(item.name)}</div>
+      </div>
+    </div>
+
+    <div class="card-price-row">
+      ${currentPrice != null
+        ? `<div class="card-price"><span class="card-currency">SAR</span>${fmtPrice(currentPrice)}</div>
+           ${changeHtml}
+           ${item.prevPrice && diff !== null && item.prevPrice !== currentPrice
+             ? `<span class="card-was">SAR ${fmtPrice(item.prevPrice)}</span>` : ''}`
+        : `<div style="color:var(--muted);font-size:14px">${hasError ? 'Check failed' : 'Not yet checked'}</div>`
+      }
+    </div>
+
+    <div class="card-badges">
+      ${sellerBadge}${primeBadge}${stockBadge}${inactiveBadge}${targetBadge}
+    </div>
+
+    <div class="card-stats">
+      <div class="stat-item">
+        <div class="stat-label">Lowest ever</div>
+        <div class="stat-val low">${item.lowestPrice != null ? 'SAR ' + fmtPrice(item.lowestPrice) : '—'}</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-label">Target price</div>
+        <div class="stat-val">${item.target_price != null ? 'SAR ' + fmtPrice(item.target_price) : '—'}</div>
+      </div>
+    </div>
+
+    <div class="card-checked">Last checked: ${relativeTime(item.last_checked_at)}</div>
+
+    ${hasError ? `<div class="card-error">⚠ ${escHtml(p.error)}</div>` : ''}
+
+    <div class="card-actions">
+      <button class="btn btn-ghost btn-sm" data-action="check-item" data-id="${item.id}" ${isChecking ? 'disabled' : ''}>
+        ${isChecking ? '<span class="spinner"></span>' : '🔄'} Check
+      </button>
+      <button class="btn btn-ghost btn-sm" data-action="view-history" data-id="${item.id}">📈 History</button>
+      <button class="btn btn-ghost btn-sm" data-action="edit-item" data-id="${item.id}">✏️ Edit</button>
+    </div>
+  </div>`;
+}
+
+// ── Render: Add / Edit Item Sheet ──────────────────────────────────────────────
+function openAddItemSheet() {
+  openSheet('Add Item', `
+    <div id="add-msg"></div>
+    <div class="form-group">
+      <label>Amazon SA URL or ASIN *</label>
+      <input type="text" id="item-input" placeholder="https://www.amazon.sa/... or B0XXXXXX" autocomplete="off">
+      <div class="hint">Paste the product URL or paste the 10-character ASIN directly.</div>
+    </div>
+    <div class="form-group">
+      <label>Name (optional — auto-detected)</label>
+      <input type="text" id="item-name" placeholder="Leave blank to auto-detect from Amazon">
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Target price (SAR)</label>
+        <input type="number" id="item-target" placeholder="e.g. 250" min="0" step="0.01">
+        <div class="hint">Notify when price drops to or below this.</div>
+      </div>
+      <div class="form-group">
+        <label>Alert on drop ≥ (%)</label>
+        <input type="number" id="item-drop-pct" value="5" min="1" max="99" step="1">
+        <div class="hint">Default 5% — any drop above this triggers a notification.</div>
+      </div>
+    </div>
+    <div class="alert alert-info" style="margin-top:8px">
+      ℹ️ The item will be scraped immediately when added. Scraping may take a few seconds.
+    </div>
+  `, `
+    <button class="btn btn-ghost" data-action="close-sheet" style="flex:1;justify-content:center">Cancel</button>
+    <button class="btn btn-primary" data-action="save-add-item" style="flex:2;justify-content:center" id="save-add-btn">Add &amp; Track</button>
+  `);
+}
+
+function openEditItemSheet(item) {
+  openSheet('Edit Item', `
+    <div id="edit-msg"></div>
+    <div class="form-group">
+      <label>Name</label>
+      <input type="text" id="edit-name" value="${escHtml(item.name)}">
+    </div>
+    <div class="form-group">
+      <label>URL</label>
+      <input type="text" value="${escHtml(item.url)}" disabled style="opacity:.5">
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Target price (SAR)</label>
+        <input type="number" id="edit-target" placeholder="None" min="0" step="0.01" value="${item.target_price ?? ''}">
+      </div>
+      <div class="form-group">
+        <label>Alert on drop ≥ (%)</label>
+        <input type="number" id="edit-drop-pct" min="1" max="99" step="1" value="${item.notify_drop_percent ?? 5}">
+      </div>
+    </div>
+    <label class="form-toggle">
+      <input type="checkbox" id="edit-active" ${item.active ? 'checked' : ''}>
+      <span>Active (check prices automatically)</span>
+    </label>
+    <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border)">
+      <button class="btn btn-danger btn-sm" data-action="delete-item" data-id="${item.id}">🗑 Delete this item</button>
+    </div>
+  `, `
+    <button class="btn btn-ghost" data-action="close-sheet" style="flex:1;justify-content:center">Cancel</button>
+    <button class="btn btn-primary" data-action="save-edit-item" data-id="${item.id}" style="flex:2;justify-content:center">Save Changes</button>
+  `);
+}
+
+// ── Render: History Sheet ──────────────────────────────────────────────────────
+async function openHistorySheet(itemId) {
+  openSheet('Price History', '<div class="loading"><div class="spinner"></div> Loading…</div>');
+  try {
+    const { item, history } = await api('GET', `/api/items/${itemId}/history?limit=200`);
+    const validHistory = history.filter(h => h.price != null && !h.error);
+    renderHistorySheet(item, history, validHistory);
+  } catch (e) {
+    document.getElementById('sheet-body').innerHTML = `<div class="alert alert-error">${escHtml(e.message)}</div>`;
+  }
+}
+
+function renderHistorySheet(item, allHistory, validHistory) {
+  const lowestPrice = validHistory.length ? Math.min(...validHistory.map(h => h.price)) : null;
+
+  document.getElementById('sheet-title').textContent = item.name;
+  document.getElementById('sheet-body').innerHTML = `
+    <div style="margin-bottom:8px;font-size:13px;color:var(--muted)">
+      ${validHistory.length} price records · ASIN: ${escHtml(item.asin || '—')}
+      · <a href="${escHtml(item.url)}" target="_blank" style="color:var(--accent)">View on Amazon ↗</a>
+    </div>
+
+    <div class="chart-legend">
+      <div class="chart-legend-item"><div class="chart-legend-dot" style="background:var(--accent)"></div> Amazon SA direct</div>
+      <div class="chart-legend-item"><div class="chart-legend-dot" style="background:var(--amazon)"></div> Third-party seller</div>
+      ${lowestPrice != null ? `<div class="chart-legend-item"><div class="chart-legend-dot" style="background:var(--success)"></div> Lowest: SAR ${fmtPrice(lowestPrice)}</div>` : ''}
+      ${item.target_price != null ? `<div class="chart-legend-item"><div class="chart-legend-dot" style="background:var(--warning)"></div> Target: SAR ${fmtPrice(item.target_price)}</div>` : ''}
+    </div>
+
+    <div class="chart-wrap"><canvas id="price-chart"></canvas></div>
+
+    <div style="overflow-x:auto;margin-top:16px">
+      <table class="history-table">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Price (SAR)</th>
+            <th>Was (SAR)</th>
+            <th>Seller</th>
+            <th>Stock</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${[...allHistory].reverse().map(h => {
+            if (h.error) {
+              return `<tr class="error-row">
+                <td>${new Date(h.checked_at).toLocaleString('en-SA')}</td>
+                <td colspan="4">⚠ ${escHtml(h.error)}</td>
+              </tr>`;
+            }
+            const dot = h.is_amazon_direct
+              ? `<span class="seller-dot amazon"></span>`
+              : `<span class="seller-dot third"></span>`;
+            return `<tr>
+              <td style="white-space:nowrap">${new Date(h.checked_at).toLocaleString('en-SA')}</td>
+              <td>${h.price != null ? fmtPrice(h.price) : '—'}</td>
+              <td style="color:var(--muted)">${h.original_price && h.original_price !== h.price ? fmtPrice(h.original_price) : '—'}</td>
+              <td>${dot}${escHtml(h.seller_name || '—')}${h.is_prime ? ' ⚡' : ''}</td>
+              <td>${h.in_stock ? '<span style="color:var(--success)">✓</span>' : '<span style="color:var(--danger)">✗</span>'}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>`;
+
+  // Build chart
+  if (validHistory.length === 0) return;
+  const labels = validHistory.map(h => new Date(h.checked_at).toLocaleDateString('en-SA'));
+  const prices = validHistory.map(h => h.price);
+  const pointColors = validHistory.map(h => h.is_amazon_direct ? '#3b82f6' : '#ff9900');
+
+  const ctx = document.getElementById('price-chart').getContext('2d');
+  if (state.sheetChart) state.sheetChart.destroy();
+
+  const datasets = [{
+    label: 'Price (SAR)',
+    data: prices,
+    borderColor: '#3b82f6',
+    backgroundColor: '#3b82f611',
+    fill: true,
+    tension: 0.3,
+    pointBackgroundColor: pointColors,
+    pointRadius: validHistory.length > 50 ? 2 : 4,
+    pointHoverRadius: 6,
+  }];
+
+  const annotations = {};
+  if (lowestPrice != null) {
+    annotations.lowest = {
+      type: 'line', yMin: lowestPrice, yMax: lowestPrice,
+      borderColor: '#22c55e', borderWidth: 1.5, borderDash: [6, 3],
+      label: { content: `Low SAR ${fmtPrice(lowestPrice)}`, display: true, backgroundColor: '#22c55e33', color: '#22c55e', font: { size: 11 } },
+    };
+  }
+  if (item.target_price != null) {
+    annotations.target = {
+      type: 'line', yMin: item.target_price, yMax: item.target_price,
+      borderColor: '#f59e0b', borderWidth: 1.5, borderDash: [6, 3],
+      label: { content: `Target SAR ${fmtPrice(item.target_price)}`, display: true, backgroundColor: '#f59e0b33', color: '#f59e0b', font: { size: 11 } },
+    };
+  }
+
+  state.sheetChart = new Chart(ctx, {
+    type: 'line',
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            title: (items) => items[0].label,
+            label: (ctx) => {
+              const h = validHistory[ctx.dataIndex];
+              const seller = h.is_amazon_direct ? 'Amazon SA' : (h.seller_name || 'Seller');
+              return [`SAR ${fmtPrice(ctx.raw)}`, `Seller: ${seller}`, h.is_prime ? 'Prime ⚡' : ''];
+            },
+          },
+          backgroundColor: '#1e293b',
+          borderColor: '#334155',
+          borderWidth: 1,
+          titleColor: '#f1f5f9',
+          bodyColor: '#94a3b8',
+        },
+      },
+      scales: {
+        x: {
+          grid: { color: '#334155' },
+          ticks: { color: '#94a3b8', maxTicksLimit: 8, maxRotation: 0 },
+        },
+        y: {
+          grid: { color: '#334155' },
+          ticks: {
+            color: '#94a3b8',
+            callback: v => 'SAR ' + fmtPrice(v),
+          },
+        },
+      },
+    },
+  });
+}
+
+// ── Render: Settings Sheet ─────────────────────────────────────────────────────
+async function openSettingsSheet() {
+  openSheet('Settings', '<div class="loading"><div class="spinner"></div> Loading…</div>');
+  try {
+    const settings = await api('GET', '/api/settings');
+    document.getElementById('sheet-body').innerHTML = `
+      <div id="settings-msg"></div>
+
+      <div class="settings-section">
+        <h3>Telegram Notifications</h3>
+        <div class="form-group">
+          <label>Bot Token</label>
+          <input type="password" id="s-bot-token" placeholder="${settings.telegram_bot_token ? '(saved — enter to change)' : 'Enter from @BotFather'}" autocomplete="off">
+          <div class="hint">Create a bot via @BotFather on Telegram. Paste the token here.</div>
+        </div>
+        <div class="form-group">
+          <label>Your Chat ID</label>
+          <input type="text" id="s-chat-id" value="${escHtml(settings.telegram_chat_id || '')}" placeholder="e.g. 123456789">
+          <div class="hint">Message @userinfobot on Telegram to get your Chat ID.</div>
+        </div>
+        <div class="form-group" style="margin-bottom:8px">
+          <label class="form-toggle">
+            <input type="checkbox" id="s-notify-drop" ${settings.notify_price_drop === '1' ? 'checked' : ''}>
+            <span>Alert on price drops</span>
+          </label>
+        </div>
+        <div class="form-group">
+          <label class="form-toggle">
+            <input type="checkbox" id="s-notify-stock" ${settings.notify_back_in_stock === '1' ? 'checked' : ''}>
+            <span>Alert when item is back in stock</span>
+          </label>
+        </div>
+        <button class="btn btn-ghost btn-sm" data-action="test-telegram" style="margin-top:4px">📨 Send Test Message</button>
+        <div id="test-msg" style="margin-top:8px"></div>
+      </div>
+
+      <div class="settings-section">
+        <h3>Check Interval</h3>
+        <div class="form-group">
+          <label>How often to check prices automatically</label>
+          <select id="s-interval">
+            <option value="30" ${settings.check_interval === '30' ? 'selected' : ''}>Every 30 minutes</option>
+            <option value="60" ${settings.check_interval === '60' ? 'selected' : ''}>Every hour</option>
+            <option value="120" ${settings.check_interval === '120' ? 'selected' : ''}>Every 2 hours</option>
+            <option value="360" ${settings.check_interval === '360' ? 'selected' : ''}>Every 6 hours</option>
+            <option value="720" ${settings.check_interval === '720' ? 'selected' : ''}>Every 12 hours</option>
+            <option value="1440" ${settings.check_interval === '1440' ? 'selected' : ''}>Once a day</option>
+          </select>
+        </div>
+        <button class="btn btn-ghost btn-sm" data-action="check-all-now">🔄 Check All Items Now</button>
+        <div id="check-all-msg" style="margin-top:8px"></div>
+      </div>
+
+      <div class="settings-section">
+        <h3>Account</h3>
+        <p style="font-size:13px;color:var(--muted)">Logged in as <strong style="color:var(--text)">${escHtml(state.user?.username || '')}</strong></p>
+        <button class="btn btn-danger btn-sm" data-action="logout" style="margin-top:8px">Sign Out</button>
+      </div>`;
+
+    document.getElementById('sheet-footer').innerHTML = `
+      <button class="btn btn-ghost" data-action="close-sheet" style="flex:1;justify-content:center">Close</button>
+      <button class="btn btn-primary" data-action="save-settings" style="flex:2;justify-content:center">Save Settings</button>`;
+  } catch (e) {
+    document.getElementById('sheet-body').innerHTML = `<div class="alert alert-error">${escHtml(e.message)}</div>`;
+  }
+}
+
+// ── Render: Notifications Sheet ────────────────────────────────────────────────
+async function openNotificationsSheet() {
+  openSheet('Notifications Sent', '<div class="loading"><div class="spinner"></div> Loading…</div>');
+  try {
+    const notifs = await api('GET', '/api/notifications');
+    if (notifs.length === 0) {
+      document.getElementById('sheet-body').innerHTML = `
+        <div class="empty" style="padding:32px 0">
+          <div class="empty-icon">🔔</div>
+          <p style="color:var(--muted)">No notifications sent yet.</p>
+        </div>`;
+      return;
+    }
+    document.getElementById('sheet-body').innerHTML = `
+      <div class="notif-list">
+        ${notifs.map(n => `
+          <div class="notif-item ${escHtml(n.type)}">
+            <div class="notif-meta">
+              <span>${n.type === 'price_drop' ? '📉 Price Drop' : '✅ Back in Stock'}</span>
+              <span>·</span>
+              <span>${new Date(n.sent_at).toLocaleString('en-SA')}</span>
+            </div>
+            <div class="notif-name">${escHtml(n.item_name)}</div>
+            ${n.price != null ? `<div class="notif-price">SAR ${fmtPrice(n.price)}</div>` : ''}
+          </div>`).join('')}
+      </div>`;
+  } catch (e) {
+    document.getElementById('sheet-body').innerHTML = `<div class="alert alert-error">${escHtml(e.message)}</div>`;
+  }
+}
+
+// ── Actions ────────────────────────────────────────────────────────────────────
+async function loadItems() {
+  state.items = await api('GET', '/api/items');
+  renderDashboard();
+}
+
+function setMsg(id, html, type = 'error') {
+  const el = document.getElementById(id);
+  if (el) el.innerHTML = `<div class="alert alert-${type}">${html}</div>`;
+}
+
+document.addEventListener('click', async e => {
+  const el = e.target.closest('[data-action]');
+  if (!el) return;
+  const action = el.dataset.action;
+  const id = el.dataset.id ? parseInt(el.dataset.id) : null;
+
+  if (action === 'close-sheet') { closeSheet(); return; }
+  if (action === 'switch-auth') { renderAuth(el.dataset.mode); return; }
+
+  // (auth handled via form submit event)
+
+  if (action === 'logout') {
+    await api('POST', '/api/auth/logout').catch(() => {});
+    state.user = null;
+    state.items = [];
+    closeSheet();
+    renderAuth('login');
+    return;
+  }
+
+  // ── Add Item ──
+  if (action === 'open-add-item') { openAddItemSheet(); return; }
+
+  if (action === 'save-add-item') {
+    const input = document.getElementById('item-input')?.value.trim();
+    const name = document.getElementById('item-name')?.value.trim();
+    const target = document.getElementById('item-target')?.value;
+    const dropPct = document.getElementById('item-drop-pct')?.value;
+    const btn = document.getElementById('save-add-btn');
+    if (!input) { setMsg('add-msg', 'Please enter a URL or ASIN.'); return; }
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> Fetching from Amazon…';
+    setMsg('add-msg', 'Scraping Amazon SA for current price and product info…', 'info');
+    try {
+      await api('POST', '/api/items', { input, name: name || undefined, target_price: target || undefined, notify_drop_percent: dropPct });
+      closeSheet();
+      await loadItems();
+    } catch (err) {
+      setMsg('add-msg', escHtml(err.message));
+      btn.disabled = false;
+      btn.innerHTML = 'Add &amp; Track';
+    }
+    return;
+  }
+
+  // ── Edit Item ──
+  if (action === 'edit-item') {
+    const item = state.items.find(i => i.id === id);
+    if (item) openEditItemSheet(item);
+    return;
+  }
+
+  if (action === 'save-edit-item') {
+    const btn = el;
+    const name = document.getElementById('edit-name')?.value.trim();
+    const target = document.getElementById('edit-target')?.value;
+    const dropPct = document.getElementById('edit-drop-pct')?.value;
+    const active = document.getElementById('edit-active')?.checked;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span>';
+    try {
+      await api('PUT', `/api/items/${id}`, { name, target_price: target || null, notify_drop_percent: dropPct, active });
+      closeSheet();
+      await loadItems();
+    } catch (err) {
+      setMsg('edit-msg', escHtml(err.message));
+      btn.disabled = false;
+      btn.innerHTML = 'Save Changes';
+    }
+    return;
+  }
+
+  // ── Delete Item ──
+  if (action === 'delete-item') {
+    if (!confirm(`Delete this item and all its price history? This cannot be undone.`)) return;
+    try {
+      await api('DELETE', `/api/items/${id}`);
+      closeSheet();
+      await loadItems();
+    } catch (err) {
+      setMsg('edit-msg', escHtml(err.message));
+    }
+    return;
+  }
+
+  // ── Check Item ──
+  if (action === 'check-item') {
+    state.checking.add(id);
+    renderDashboard();
+    try {
+      await api('POST', `/api/items/${id}/check`);
+      await loadItems();
+    } catch (err) {
+      state.checking.delete(id);
+      renderDashboard();
+      alert(`Check failed: ${err.message}`);
+    } finally {
+      state.checking.delete(id);
+    }
+    return;
+  }
+
+  // ── View History ──
+  if (action === 'view-history') { await openHistorySheet(id); return; }
+
+  // ── Settings ──
+  if (action === 'open-settings') { await openSettingsSheet(); return; }
+
+  if (action === 'save-settings') {
+    const botToken = document.getElementById('s-bot-token')?.value.trim();
+    const chatId = document.getElementById('s-chat-id')?.value.trim();
+    const interval = document.getElementById('s-interval')?.value;
+    const notifyDrop = document.getElementById('s-notify-drop')?.checked ? '1' : '0';
+    const notifyStock = document.getElementById('s-notify-stock')?.checked ? '1' : '0';
+    const payload = { check_interval: interval, notify_price_drop: notifyDrop, notify_back_in_stock: notifyStock };
+    if (chatId) payload.telegram_chat_id = chatId;
+    if (botToken) payload.telegram_bot_token = botToken;
+    const btn = el;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span>';
+    try {
+      await api('PUT', '/api/settings', payload);
+      setMsg('settings-msg', 'Settings saved.', 'success');
+    } catch (err) {
+      setMsg('settings-msg', escHtml(err.message));
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = 'Save Settings';
+    }
+    return;
+  }
+
+  if (action === 'test-telegram') {
+    const btn = el;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> Sending…';
+    try {
+      await api('POST', '/api/settings/test-telegram');
+      document.getElementById('test-msg').innerHTML = `<div class="alert alert-success">✅ Sent! Check your Telegram.</div>`;
+    } catch (err) {
+      document.getElementById('test-msg').innerHTML = `<div class="alert alert-error">${escHtml(err.message)}</div>`;
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = '📨 Send Test Message';
+    }
+    return;
+  }
+
+  if (action === 'check-all-now') {
+    const btn = el;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> Starting…';
+    try {
+      await api('POST', '/api/settings/check-all');
+      document.getElementById('check-all-msg').innerHTML = `<div class="alert alert-info">Price check started in the background. Cards will update when complete.</div>`;
+      setTimeout(() => loadItems(), 10000);
+    } catch (err) {
+      document.getElementById('check-all-msg').innerHTML = `<div class="alert alert-error">${escHtml(err.message)}</div>`;
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = '🔄 Check All Items Now';
+    }
+    return;
+  }
+
+  // ── Notifications ──
+  if (action === 'open-notifications') { await openNotificationsSheet(); return; }
+});
+
+// Auth form submit (Enter key or button click)
+document.addEventListener('submit', async e => {
+  if (e.target.id !== 'auth-form') return;
+  e.preventDefault();
+  const btn = document.getElementById('auth-btn');
+  const isLogin = btn?.textContent.trim().includes('Sign In');
+  const username = document.getElementById('auth-username').value.trim();
+  const password = document.getElementById('auth-password').value;
+  if (!btn) return;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>';
+  try {
+    const endpoint = isLogin ? '/api/auth/login' : '/api/auth/register';
+    const data = await api('POST', endpoint, { username, password });
+    state.user = { username: data.username };
+    await loadItems();
+  } catch (err) {
+    setMsg('auth-msg', escHtml(err.message));
+    btn.disabled = false;
+    btn.innerHTML = isLogin ? 'Sign In' : 'Create Account';
+  }
+});
+
+// Close sheet on overlay click
+document.getElementById('overlay').addEventListener('click', closeSheet);
+
+// ── Init ───────────────────────────────────────────────────────────────────────
+(async function init() {
+  try {
+    const status = await api('GET', '/api/auth/status');
+    if (status.loggedIn) {
+      state.user = { username: status.username };
+      await loadItems();
+    } else {
+      renderAuth('login');
+    }
+  } catch (_) {
+    renderAuth('login');
+  }
+})();
+
+// Register SW
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js').catch(() => {});
+}
+</script>
+</body>
+</html>
