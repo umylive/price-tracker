@@ -23,7 +23,6 @@
       --text: #f1f5f9;
       --muted: #94a3b8;
       --amazon: #ff9900;
-      --aliexpress: #e62e04;
       --prime: #00a8e1;
       --card-r: 14px;
     }
@@ -321,11 +320,11 @@ function renderDashboard() {
 }
 
 function storeLabel(item) {
-  return item.store === 'aliexpress' ? 'AliExpress' : 'Amazon SA';
+  return 'Amazon SA';
 }
 
 function storeColor(item) {
-  return item.store === 'aliexpress' ? 'var(--aliexpress)' : 'var(--amazon)';
+  return 'var(--amazon)';
 }
 
 function itemCurrency(item) {
@@ -368,7 +367,7 @@ function renderEmpty() {
   return `<div class="empty">
     <div class="empty-icon">📦</div>
     <h2>No items yet</h2>
-    <p>Add products from Amazon Saudi Arabia or AliExpress to start tracking their prices.</p>
+    <p>Add products from Amazon Saudi Arabia to start tracking their prices.</p>
     <button class="btn btn-primary" data-action="open-add-item">+ Add Your First Item</button>
   </div>`;
 }
@@ -471,8 +470,8 @@ function openAddItemSheet() {
     <div id="add-msg"></div>
     <div class="form-group">
       <label>Product URL or ASIN *</label>
-      <input type="text" id="item-input" placeholder="amazon.sa URL, ASIN, or aliexpress.com URL" autocomplete="off">
-      <div class="hint">Paste an Amazon SA product URL or ASIN, or an AliExpress product URL.</div>
+      <input type="text" id="item-input" placeholder="amazon.sa URL or ASIN" autocomplete="off">
+      <div class="hint">Paste an Amazon SA product URL or bare ASIN (e.g. B0XXXXXXXX).</div>
     </div>
     <div class="form-group">
       <label>Name (optional — auto-detected)</label>
@@ -549,9 +548,8 @@ function renderHistorySheet(item, allHistory, validHistory) {
   const lowestPrice = validHistory.length ? Math.min(...validHistory.map(h => h.price)) : null;
 
   const historyCur = validHistory[0]?.currency || 'SAR';
-  const isAliExpress = item.store === 'aliexpress';
-  const storeLink = isAliExpress ? 'View on AliExpress ↗' : 'View on Amazon ↗';
-  const itemIdLabel = isAliExpress ? 'AliExpress' : `ASIN: ${item.asin || '—'}`;
+  const storeLink = 'View on Amazon ↗';
+  const itemIdLabel = `ASIN: ${item.asin || '—'}`;
 
   document.getElementById('sheet-title').textContent = item.name;
   document.getElementById('sheet-body').innerHTML = `
@@ -561,10 +559,8 @@ function renderHistorySheet(item, allHistory, validHistory) {
     </div>
 
     <div class="chart-legend">
-      ${isAliExpress
-        ? `<div class="chart-legend-item"><div class="chart-legend-dot" style="background:var(--aliexpress)"></div> AliExpress price</div>`
-        : `<div class="chart-legend-item"><div class="chart-legend-dot" style="background:var(--accent)"></div> Amazon SA direct</div>
-           <div class="chart-legend-item"><div class="chart-legend-dot" style="background:var(--amazon)"></div> Third-party seller</div>`
+      `<div class="chart-legend-item"><div class="chart-legend-dot" style="background:var(--accent)"></div> Amazon SA direct</div>
+       <div class="chart-legend-item"><div class="chart-legend-dot" style="background:var(--amazon)"></div> Third-party seller</div>`
       }
       ${lowestPrice != null ? `<div class="chart-legend-item"><div class="chart-legend-dot" style="background:var(--success)"></div> Lowest: ${historyCur} ${fmtPrice(lowestPrice)}</div>` : ''}
       ${item.target_price != null ? `<div class="chart-legend-item"><div class="chart-legend-dot" style="background:var(--warning)"></div> Target: ${historyCur} ${fmtPrice(item.target_price)}</div>` : ''}
@@ -611,9 +607,7 @@ function renderHistorySheet(item, allHistory, validHistory) {
   if (validHistory.length === 0) return;
   const labels = validHistory.map(h => new Date(h.checked_at).toLocaleDateString('en-SA'));
   const prices = validHistory.map(h => h.price);
-  const pointColors = validHistory.map(h =>
-    isAliExpress ? '#e62e04' : (h.is_amazon_direct ? '#3b82f6' : '#ff9900')
-  );
+  const pointColors = validHistory.map(h => h.is_amazon_direct ? '#3b82f6' : '#ff9900');
 
   const ctx = document.getElementById('price-chart').getContext('2d');
   if (state.sheetChart) state.sheetChart.destroy();
@@ -660,9 +654,7 @@ function renderHistorySheet(item, allHistory, validHistory) {
             title: (items) => items[0].label,
             label: (ctx) => {
               const h = validHistory[ctx.dataIndex];
-              const seller = isAliExpress
-                ? (h.seller_name || 'AliExpress')
-                : (h.is_amazon_direct ? 'Amazon SA' : (h.seller_name || 'Seller'));
+              const seller = h.is_amazon_direct ? 'Amazon SA' : (h.seller_name || 'Seller');
               return [`${historyCur} ${fmtPrice(ctx.raw)}`, `Seller: ${seller}`, h.is_prime ? 'Prime ⚡' : ''];
             },
           },
@@ -735,9 +727,9 @@ async function openSettingsSheet() {
       </div>
 
       <div class="settings-section">
-        <h3>Check Intervals</h3>
+        <h3>Check Interval</h3>
         <div class="form-group">
-          <label>Amazon SA — how often to check</label>
+          <label>How often to check prices automatically</label>
           <select id="s-interval">
             <option value="30" ${settings.check_interval === '30' ? 'selected' : ''}>Every 30 minutes</option>
             <option value="60" ${settings.check_interval === '60' ? 'selected' : ''}>Every hour</option>
@@ -745,17 +737,6 @@ async function openSettingsSheet() {
             <option value="360" ${settings.check_interval === '360' ? 'selected' : ''}>Every 6 hours</option>
             <option value="720" ${settings.check_interval === '720' ? 'selected' : ''}>Every 12 hours</option>
             <option value="1440" ${settings.check_interval === '1440' ? 'selected' : ''}>Once a day</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label>AliExpress — how often to check</label>
-          <select id="s-ali-interval">
-            <option value="60" ${settings.aliexpress_check_interval === '60' ? 'selected' : ''}>Every hour</option>
-            <option value="120" ${settings.aliexpress_check_interval === '120' ? 'selected' : ''}>Every 2 hours</option>
-            <option value="180" ${(!settings.aliexpress_check_interval || settings.aliexpress_check_interval === '180') ? 'selected' : ''}>Every 3 hours</option>
-            <option value="360" ${settings.aliexpress_check_interval === '360' ? 'selected' : ''}>Every 6 hours</option>
-            <option value="720" ${settings.aliexpress_check_interval === '720' ? 'selected' : ''}>Every 12 hours</option>
-            <option value="1440" ${settings.aliexpress_check_interval === '1440' ? 'selected' : ''}>Once a day</option>
           </select>
         </div>
         <button class="btn btn-ghost btn-sm" data-action="check-all-now">🔄 Check All Items Now</button>
@@ -933,10 +914,9 @@ document.addEventListener('click', async e => {
     const botToken = document.getElementById('s-bot-token')?.value.trim();
     const chatId = document.getElementById('s-chat-id')?.value.trim();
     const interval = document.getElementById('s-interval')?.value;
-    const aliInterval = document.getElementById('s-ali-interval')?.value;
     const notifyDrop = document.getElementById('s-notify-drop')?.checked ? '1' : '0';
     const notifyStock = document.getElementById('s-notify-stock')?.checked ? '1' : '0';
-    const payload = { check_interval: interval, aliexpress_check_interval: aliInterval, notify_price_drop: notifyDrop, notify_back_in_stock: notifyStock };
+    const payload = { check_interval: interval, notify_price_drop: notifyDrop, notify_back_in_stock: notifyStock };
     if (chatId) payload.telegram_chat_id = chatId;
     if (botToken) payload.telegram_bot_token = botToken;
     const btn = el;

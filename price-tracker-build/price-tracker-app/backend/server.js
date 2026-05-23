@@ -6,7 +6,7 @@ const {
   hashPassword, verifyPassword, createSession, getSession,
   deleteSession, isRateLimited, recordLoginAttempt, requireAuth,
 } = require('./auth');
-const { scrapeAmazonSA, scrapeAliExpress, normalizeUrl } = require('./scraper');
+const { scrapeAmazonSA, normalizeUrl } = require('./scraper');
 const { startScheduler, restartScheduler, runAllChecks, checkItem, sendTelegram } = require('./scheduler');
 
 const getSetting = k => db.prepare('SELECT value FROM settings WHERE key = ?').get(k)?.value || '';
@@ -108,7 +108,7 @@ app.post('/api/items', requireAuth, async (req, res) => {
   if (!input?.trim()) return res.status(400).json({ error: 'Product URL or ASIN is required' });
 
   const normalized = normalizeUrl(input.trim());
-  if (!normalized) return res.status(400).json({ error: 'Could not parse a valid Amazon SA URL/ASIN or AliExpress product URL' });
+  if (!normalized) return res.status(400).json({ error: 'Could not parse a valid Amazon SA URL or ASIN' });
   const { url, asin, store } = normalized;
 
   const existing = db.prepare('SELECT id FROM items WHERE user_id = ? AND url = ?').get(req.user.id, url);
@@ -118,7 +118,7 @@ app.post('/api/items', requireAuth, async (req, res) => {
   let imageUrl = null;
   let scraped = null;
   try {
-    scraped = store === 'aliexpress' ? await scrapeAliExpress(url) : await scrapeAmazonSA(url);
+    scraped = await scrapeAmazonSA(url);
     if (!finalName && scraped.title) finalName = scraped.title;
     imageUrl = scraped.imageUrl || null;
   } catch (e) {
@@ -220,7 +220,7 @@ app.get('/api/settings', requireAuth, (req, res) => {
 });
 
 app.put('/api/settings', requireAuth, (req, res) => {
-  const allowed = ['telegram_bot_token', 'telegram_chat_id', 'check_interval', 'aliexpress_check_interval', 'notify_price_drop', 'notify_back_in_stock']
+  const allowed = ['telegram_bot_token', 'telegram_chat_id', 'check_interval', 'notify_price_drop', 'notify_back_in_stock']
     .filter(k => !(k === 'telegram_bot_token' && process.env.TELEGRAM_BOT_TOKEN));
   const update = db.prepare('UPDATE settings SET value = ? WHERE key = ?');
   const batch = db.transaction(updates => {
@@ -229,7 +229,7 @@ app.put('/api/settings', requireAuth, (req, res) => {
     }
   });
   batch(Object.entries(req.body));
-  if ('check_interval' in req.body || 'aliexpress_check_interval' in req.body) restartScheduler();
+  if ('check_interval' in req.body) restartScheduler();
   res.json({ ok: true });
 });
 

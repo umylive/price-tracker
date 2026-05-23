@@ -5,7 +5,6 @@ services:
     restart: unless-stopped
     ports:
       - "8766:3000"
-    shm_size: '256m'
     volumes:
       - /mnt/user/appdata/price-tracker:/data
     environment:

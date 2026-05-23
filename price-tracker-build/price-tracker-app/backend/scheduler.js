@@ -1,9 +1,8 @@
 const cron = require('node-cron');
 const db = require('./database');
-const { scrapeAmazonSA, scrapeAliExpress } = require('./scraper');
+const { scrapeAmazonSA } = require('./scraper');
 
-let amazonTask = null;
-let aliexpressTask = null;
+let currentTask = null;
 
 async function sendTelegram(botToken, chatId, message) {
   if (!botToken || !chatId) return false;
@@ -29,16 +28,9 @@ async function sendTelegram(botToken, chatId, message) {
 
 async function checkItem(item) {
   console.log(`[check] ${item.name}`);
-  const settings = {};
-  db.prepare('SELECT key, value FROM settings').all().forEach(r => { settings[r.key] = r.value; });
-
   let scraped;
   try {
-    if (item.store === 'aliexpress') {
-      scraped = await scrapeAliExpress(item.url);
-    } else {
-      scraped = await scrapeAmazonSA(item.url);
-    }
+    scraped = await scrapeAmazonSA(item.url);
   } catch (err) {
     db.prepare("INSERT INTO price_history (item_id, error, in_stock) VALUES (?, ?, 0)").run(item.id, err.message);
     db.prepare("UPDATE items SET last_checked_at = datetime('now') WHERE id = ?").run(item.id);
@@ -69,8 +61,10 @@ async function checkItem(item) {
   }
   db.prepare("UPDATE items SET last_checked_at = datetime('now') WHERE id = ?").run(item.id);
 
-  console.log(`  [ok] ${scraped.currency || 'SAR'} ${scraped.price} | seller: ${scraped.sellerName} | inStock: ${scraped.inStock}`);
+  console.log(`  [ok] SAR ${scraped.price} | seller: ${scraped.sellerName} | inStock: ${scraped.inStock}`);
 
+  const settings = {};
+  db.prepare('SELECT key, value FROM settings').all().forEach(r => { settings[r.key] = r.value; });
   const botToken = process.env.TELEGRAM_BOT_TOKEN || settings.telegram_bot_token;
   const chatId = settings.telegram_chat_id;
   if (!botToken || !chatId) return;
@@ -99,11 +93,9 @@ async function checkItem(item) {
 
 function buildDropMsg(item, scraped, prevPrice, dropPct) {
   const cur = scraped.currency || 'SAR';
-  const seller = item.store === 'aliexpress'
-    ? `🛒 ${scraped.sellerName ? `Seller: ${scraped.sellerName}` : 'AliExpress'}`
-    : (scraped.isAmazonDirect
-      ? '✅ Sold by <b>Amazon SA</b> directly'
-      : `🏪 Seller: ${scraped.sellerName || 'Third-party seller'}`);
+  const seller = scraped.isAmazonDirect
+    ? '✅ Sold by <b>Amazon SA</b> directly'
+    : `🏪 Seller: ${scraped.sellerName || 'Third-party seller'}`;
   const prime = scraped.isPrime ? '\n⚡ Prime eligible' : '';
   const target = item.target_price != null && scraped.price <= item.target_price
     ? '\n🎯 <b>Hit your target price!</b>' : '';
@@ -122,12 +114,10 @@ function buildDropMsg(item, scraped, prevPrice, dropPct) {
 }
 
 function buildStockMsg(item, scraped) {
-  const seller = item.store === 'aliexpress'
-    ? `🛒 ${scraped.sellerName ? `Seller: ${scraped.sellerName}` : 'AliExpress'}`
-    : (scraped.isAmazonDirect
-      ? '✅ Sold by <b>Amazon SA</b> directly'
-      : `🏪 Seller: ${scraped.sellerName || 'Third-party seller'}`);
-  const priceStr = scraped.price != null ? `${scraped.currency || 'SAR'} ${scraped.price.toFixed(2)}` : 'N/A';
+  const seller = scraped.isAmazonDirect
+    ? '✅ Sold by <b>Amazon SA</b> directly'
+    : `🏪 Seller: ${scraped.sellerName || 'Third-party seller'}`;
+  const priceStr = scraped.price != null ? `SAR ${scraped.price.toFixed(2)}` : 'N/A';
   return [
     '✅ <b>Back in Stock!</b>',
     '',
@@ -139,25 +129,14 @@ function buildStockMsg(item, scraped) {
   ].join('\n');
 }
 
-async function runStoreChecks(store, label) {
-  const items = db.prepare('SELECT * FROM items WHERE active = 1 AND store = ?').all(store);
-  if (!items.length) return;
-  console.log(`[scheduler/${label}] Checking ${items.length} items`);
-  for (let i = 0; i < items.length; i++) {
-    await checkItem(items[i]);
-    if (i < items.length - 1) await new Promise(r => setTimeout(r, 60000));
-  }
-  console.log(`[scheduler/${label}] Done`);
-}
-
 async function runAllChecks() {
   const items = db.prepare('SELECT * FROM items WHERE active = 1').all();
-  console.log(`[scheduler] Manual check: ${items.length} active items`);
+  console.log(`[scheduler] Checking ${items.length} active items`);
   for (let i = 0; i < items.length; i++) {
     await checkItem(items[i]);
     if (i < items.length - 1) await new Promise(r => setTimeout(r, 60000));
   }
-  console.log('[scheduler] Manual check done');
+  console.log('[scheduler] Done');
 }
 
 function buildCronExpr(minutes) {
@@ -167,22 +146,12 @@ function buildCronExpr(minutes) {
 }
 
 function startScheduler() {
-  const amazonRow = db.prepare("SELECT value FROM settings WHERE key = 'check_interval'").get();
-  const amazonMinutes = parseInt(amazonRow?.value || '60', 10);
-  const amazonExpr = buildCronExpr(amazonMinutes);
-
-  const aliRow = db.prepare("SELECT value FROM settings WHERE key = 'aliexpress_check_interval'").get();
-  const aliMinutes = parseInt(aliRow?.value || '180', 10);
-  const aliExpr = buildCronExpr(aliMinutes);
-
-  if (amazonTask) { amazonTask.stop(); amazonTask = null; }
-  if (aliexpressTask) { aliexpressTask.stop(); aliexpressTask = null; }
-
-  amazonTask = cron.schedule(amazonExpr, () => runStoreChecks('amazon_sa', 'amazon'));
-  aliexpressTask = cron.schedule(aliExpr, () => runStoreChecks('aliexpress', 'aliexpress'));
-
-  console.log(`[scheduler] Amazon SA: every ${amazonMinutes}min (${amazonExpr})`);
-  console.log(`[scheduler] AliExpress: every ${aliMinutes}min (${aliExpr})`);
+  const row = db.prepare("SELECT value FROM settings WHERE key = 'check_interval'").get();
+  const minutes = parseInt(row?.value || '60', 10);
+  const expr = buildCronExpr(minutes);
+  if (currentTask) { currentTask.stop(); currentTask = null; }
+  currentTask = cron.schedule(expr, runAllChecks);
+  console.log(`[scheduler] Started — every ${minutes}min (${expr})`);
 }
 
 function restartScheduler() {
