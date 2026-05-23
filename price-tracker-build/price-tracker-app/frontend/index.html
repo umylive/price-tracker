@@ -877,8 +877,10 @@ document.addEventListener('click', async e => {
     if (!confirm(`Delete this item and all its price history? This cannot be undone.`)) return;
     try {
       await api('DELETE', `/api/items/${id}`);
+      state.items = state.items.filter(i => i.id !== id);
       closeSheet();
-      await loadItems();
+      renderDashboard();
+      loadItems().catch(() => {});
     } catch (err) {
       setMsg('edit-msg', escHtml(err.message));
     }

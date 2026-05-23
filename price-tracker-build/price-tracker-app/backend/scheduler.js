@@ -32,8 +32,12 @@ async function checkItem(item) {
   try {
     scraped = await scrapeAmazonSA(item.url);
   } catch (err) {
-    db.prepare("INSERT INTO price_history (item_id, error, in_stock) VALUES (?, ?, 0)").run(item.id, err.message);
-    db.prepare("UPDATE items SET last_checked_at = datetime('now') WHERE id = ?").run(item.id);
+    try {
+      db.prepare("INSERT INTO price_history (item_id, error, in_stock) VALUES (?, ?, 0)").run(item.id, err.message);
+      db.prepare("UPDATE items SET last_checked_at = datetime('now') WHERE id = ?").run(item.id);
+    } catch (dbErr) {
+      console.error(`  [db-error] ${dbErr.message}`);
+    }
     console.error(`  [error] ${err.message}`);
     return;
   }
@@ -133,7 +137,11 @@ async function runAllChecks() {
   const items = db.prepare('SELECT * FROM items WHERE active = 1').all();
   console.log(`[scheduler] Checking ${items.length} active items`);
   for (let i = 0; i < items.length; i++) {
-    await checkItem(items[i]);
+    try {
+      await checkItem(items[i]);
+    } catch (e) {
+      console.error(`[scheduler] Unexpected error for "${items[i].name}": ${e.message}`);
+    }
     if (i < items.length - 1) await new Promise(r => setTimeout(r, 60000));
   }
   console.log('[scheduler] Done');
