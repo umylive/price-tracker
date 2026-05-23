@@ -441,9 +441,16 @@ async function scrapeAliExpressAPI(productUrl, appKey, appSecret) {
     }
   );
 
-  const resp = data?.aliexpress_affiliate_productdetail_get_response?.resp_result;
-  if (!resp) throw new Error('Unexpected affiliate API response structure');
-  if (resp.resp_code !== 200) throw new Error(`Affiliate API ${resp.resp_code}: ${resp.resp_msg}`);
+  console.log('[aliexpress] API raw response:', JSON.stringify(data).slice(0, 800));
+
+  if (data?.error_response) {
+    throw new Error(`Affiliate API error: ${data.error_response.msg || JSON.stringify(data.error_response)}`);
+  }
+
+  let resp = data?.aliexpress_affiliate_productdetail_get_response?.resp_result;
+  if (!resp) throw new Error(`Unexpected affiliate API response structure: ${JSON.stringify(data).slice(0, 200)}`);
+  if (typeof resp === 'string') { try { resp = JSON.parse(resp); } catch (_) {} }
+  if (String(resp.resp_code) !== '200') throw new Error(`Affiliate API ${resp.resp_code}: ${resp.resp_msg}`);
 
   const products = resp.result?.products?.product;
   if (!Array.isArray(products) || products.length === 0) {
