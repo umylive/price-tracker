@@ -1,13 +1,16 @@
 const express = require('express');
 const cookieParser = require('cookie-parser');
 const path = require('path');
+const axios = require('axios');
 const db = require('./database');
 const {
   hashPassword, verifyPassword, createSession, getSession,
   deleteSession, isRateLimited, recordLoginAttempt, requireAuth,
 } = require('./auth');
 const { scrapeAmazonSA, scrapeAliExpress, normalizeUrl } = require('./scraper');
-const { startScheduler, restartScheduler, runAllChecks, checkItem, sendTelegram } = require('./scheduler');
+const { startScheduler, restartScheduler, runAllChecks, checkItem, sendTelegram, getValidAliToken } = require('./scheduler');
+
+const getSetting = k => db.prepare('SELECT value FROM settings WHERE key = ?').get(k)?.value || '';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -118,10 +121,10 @@ app.post('/api/items', requireAuth, async (req, res) => {
   let scraped = null;
   try {
     if (store === 'aliexpress') {
-      const getSetting = k => db.prepare('SELECT value FROM settings WHERE key = ?').get(k)?.value || '';
       const appKey = process.env.ALIEXPRESS_APP_KEY || getSetting('aliexpress_app_key');
       const appSecret = process.env.ALIEXPRESS_APP_SECRET || getSetting('aliexpress_app_secret');
-      scraped = await scrapeAliExpress(url, appKey, appSecret);
+      const accessToken = await getValidAliToken(appKey, appSecret);
+      scraped = await scrapeAliExpress(url, appKey, appSecret, accessToken);
     } else {
       scraped = await scrapeAmazonSA(url);
     }
@@ -224,6 +227,10 @@ app.get('/api/settings', requireAuth, (req, res) => {
   });
   settings.telegram_via_env = !!process.env.TELEGRAM_BOT_TOKEN;
   settings.aliexpress_via_env = !!(process.env.ALIEXPRESS_APP_KEY && process.env.ALIEXPRESS_APP_SECRET);
+  settings.aliexpress_connected = !!settings.aliexpress_access_token;
+  settings.aliexpress_token_expires = settings.aliexpress_token_expires || null;
+  delete settings.aliexpress_access_token;
+  delete settings.aliexpress_refresh_token;
   res.json(settings);
 });
 
@@ -243,8 +250,53 @@ app.put('/api/settings', requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 
+// ── AliExpress OAuth ──────────────────────────────────────────────────────────
+
+app.get('/api/auth/aliexpress/start', requireAuth, (req, res) => {
+  const appKey = process.env.ALIEXPRESS_APP_KEY || getSetting('aliexpress_app_key');
+  if (!appKey) return res.status(400).json({ error: 'AliExpress App Key not configured' });
+  const proto = req.headers['x-forwarded-proto'] || req.protocol || 'http';
+  const host = req.headers['x-forwarded-host'] || req.headers.host;
+  const callbackUrl = `${proto}://${host}/api/auth/aliexpress/callback`;
+  res.redirect(`https://oauth.aliexpress.com/authorize?response_type=code&force_auth=true&redirect_uri=${encodeURIComponent(callbackUrl)}&client_id=${appKey}`);
+});
+
+app.get('/api/auth/aliexpress/callback', async (req, res) => {
+  const { code } = req.query;
+  if (!code) return res.status(400).send('<p>No authorization code received from AliExpress.</p><p><a href="/">Back</a></p>');
+  const appKey = process.env.ALIEXPRESS_APP_KEY || getSetting('aliexpress_app_key');
+  const appSecret = process.env.ALIEXPRESS_APP_SECRET || getSetting('aliexpress_app_secret');
+  const proto = req.headers['x-forwarded-proto'] || req.protocol || 'http';
+  const host = req.headers['x-forwarded-host'] || req.headers.host;
+  const callbackUrl = `${proto}://${host}/api/auth/aliexpress/callback`;
+  try {
+    const { data } = await axios.post('https://oauth.aliexpress.com/token',
+      new URLSearchParams({ grant_type: 'authorization_code', code, client_id: appKey, client_secret: appSecret, redirect_uri: callbackUrl }).toString(),
+      { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 10000 }
+    );
+    if (!data.access_token) throw new Error(JSON.stringify(data));
+    const upd = db.prepare('UPDATE settings SET value = ? WHERE key = ?');
+    upd.run(data.access_token, 'aliexpress_access_token');
+    upd.run(data.refresh_token || '', 'aliexpress_refresh_token');
+    upd.run(new Date(Date.now() + (data.expire_time || 2592000) * 1000).toISOString(), 'aliexpress_token_expires');
+    console.log('[aliexpress oauth] account connected');
+    res.redirect('/#settings');
+  } catch (e) {
+    console.error('[aliexpress oauth] callback error:', e.message);
+    res.status(500).send(`<p>OAuth failed: ${e.message}</p><p><a href="/">Back</a></p>`);
+  }
+});
+
+app.post('/api/auth/aliexpress/disconnect', requireAuth, (req, res) => {
+  const upd = db.prepare('UPDATE settings SET value = ? WHERE key = ?');
+  upd.run('', 'aliexpress_access_token');
+  upd.run('', 'aliexpress_refresh_token');
+  upd.run('', 'aliexpress_token_expires');
+  res.json({ ok: true });
+});
+
 app.post('/api/settings/test-telegram', requireAuth, async (req, res) => {
-  const token = process.env.TELEGRAM_BOT_TOKEN || db.prepare("SELECT value FROM settings WHERE key = 'telegram_bot_token'").get()?.value;
+  const token = process.env.TELEGRAM_BOT_TOKEN || getSetting('telegram_bot_token');
   const chatId = db.prepare("SELECT value FROM settings WHERE key = 'telegram_chat_id'").get()?.value;
   if (!token || !chatId) return res.status(400).json({ error: 'Telegram bot token and chat ID are not configured' });
   const ok = await sendTelegram(token, chatId,

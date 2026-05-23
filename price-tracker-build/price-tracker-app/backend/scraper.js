@@ -433,11 +433,12 @@ function parseAliApiProduct(p) {
   };
 }
 
-async function aliApiCall(params, appKey, appSecret) {
+async function aliApiCall(params, appKey, appSecret, accessToken = null) {
   params.app_key = appKey;
   params.timestamp = new Date().toISOString().replace('T', ' ').slice(0, 19);
   params.sign_method = 'md5';
   params.v = '2.0';
+  if (accessToken) params.access_token = accessToken;
   params.sign = signAliRequest(params, appSecret);
 
   const { data } = await axios.post(
@@ -449,7 +450,7 @@ async function aliApiCall(params, appKey, appSecret) {
   return data;
 }
 
-async function scrapeAliExpressAPI(productUrl, appKey, appSecret) {
+async function scrapeAliExpressAPI(productUrl, appKey, appSecret, accessToken = null) {
   const itemId = productUrl.match(/\/item\/(\d+)/)?.[1];
 
   // Method 1: productdetail.get (works only for affiliate-enrolled products)
@@ -513,13 +514,13 @@ async function scrapeAliExpressAPI(productUrl, appKey, appSecret) {
     }
   }
 
-  // Method 3: solution.product.info.get — works by product_id, not restricted to affiliate catalog
-  if (itemId) {
+  // Method 3: solution.product.info.get — works by product_id, requires OAuth access_token
+  if (itemId && accessToken) {
     try {
       const data = await aliApiCall({
         method: 'aliexpress.solution.product.info.get',
         product_id: itemId,
-      }, appKey, appSecret);
+      }, appKey, appSecret, accessToken);
 
       if (data?.error_response) throw new Error(data.error_response.msg || JSON.stringify(data.error_response));
 
@@ -550,6 +551,8 @@ async function scrapeAliExpressAPI(productUrl, appKey, appSecret) {
     } catch (e) {
       console.error('[aliexpress] solution.product.info.get error:', e.message);
     }
+  } else if (itemId && !accessToken) {
+    console.log('[aliexpress] skipping solution API — connect your AliExpress account in Settings');
   }
 
   throw new Error('Product not found via AliExpress API');
@@ -643,13 +646,13 @@ function parseAliHtml(html) {
   return null;
 }
 
-async function scrapeAliExpress(url, appKey, appSecret) {
+async function scrapeAliExpress(url, appKey, appSecret, accessToken = null) {
   // 1. Try affiliate API first — reliable, no bot risk
   const key = appKey || process.env.ALIEXPRESS_APP_KEY;
   const secret = appSecret || process.env.ALIEXPRESS_APP_SECRET;
   if (key && secret) {
     try {
-      const result = await scrapeAliExpressAPI(url, key, secret);
+      const result = await scrapeAliExpressAPI(url, key, secret, accessToken);
       if (result?.title && result?.price != null) {
         console.log(`[aliexpress] affiliate API OK: ${result.currency} ${result.price}`);
         return result;
