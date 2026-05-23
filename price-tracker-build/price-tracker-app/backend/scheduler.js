@@ -1,6 +1,6 @@
 const cron = require('node-cron');
 const db = require('./database');
-const { scrapeAmazonSA } = require('./scraper');
+const { scrapeAmazonSA, scrapeAliExpress } = require('./scraper');
 
 let currentTask = null;
 
@@ -30,7 +30,7 @@ async function checkItem(item) {
   console.log(`[check] ${item.name}`);
   let scraped;
   try {
-    scraped = await scrapeAmazonSA(item.url);
+    scraped = item.store === 'aliexpress' ? await scrapeAliExpress(item.url) : await scrapeAmazonSA(item.url);
   } catch (err) {
     db.prepare("INSERT INTO price_history (item_id, error, in_stock) VALUES (?, ?, 0)").run(item.id, err.message);
     db.prepare("UPDATE items SET last_checked_at = datetime('now') WHERE id = ?").run(item.id);
@@ -93,9 +93,11 @@ async function checkItem(item) {
 
 function buildDropMsg(item, scraped, prevPrice, dropPct) {
   const cur = scraped.currency || 'SAR';
-  const seller = scraped.isAmazonDirect
-    ? '✅ Sold by <b>Amazon SA</b> directly'
-    : `🏪 Seller: ${scraped.sellerName || 'Third-party seller'}`;
+  const seller = item.store === 'aliexpress'
+    ? `🛒 ${scraped.sellerName ? `Seller: ${scraped.sellerName}` : 'AliExpress'}`
+    : (scraped.isAmazonDirect
+      ? '✅ Sold by <b>Amazon SA</b> directly'
+      : `🏪 Seller: ${scraped.sellerName || 'Third-party seller'}`);
   const prime = scraped.isPrime ? '\n⚡ Prime eligible' : '';
   const target = item.target_price != null && scraped.price <= item.target_price
     ? '\n🎯 <b>Hit your target price!</b>' : '';
@@ -114,9 +116,11 @@ function buildDropMsg(item, scraped, prevPrice, dropPct) {
 }
 
 function buildStockMsg(item, scraped) {
-  const seller = scraped.isAmazonDirect
-    ? '✅ Sold by <b>Amazon SA</b> directly'
-    : `🏪 Seller: ${scraped.sellerName || 'Third-party seller'}`;
+  const seller = item.store === 'aliexpress'
+    ? `🛒 ${scraped.sellerName ? `Seller: ${scraped.sellerName}` : 'AliExpress'}`
+    : (scraped.isAmazonDirect
+      ? '✅ Sold by <b>Amazon SA</b> directly'
+      : `🏪 Seller: ${scraped.sellerName || 'Third-party seller'}`);
   const priceStr = scraped.price != null ? `${scraped.currency || 'SAR'} ${scraped.price.toFixed(2)}` : 'N/A';
   return [
     '✅ <b>Back in Stock!</b>',

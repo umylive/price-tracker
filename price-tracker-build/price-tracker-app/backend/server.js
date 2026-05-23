@@ -6,7 +6,7 @@ const {
   hashPassword, verifyPassword, createSession, getSession,
   deleteSession, isRateLimited, recordLoginAttempt, requireAuth,
 } = require('./auth');
-const { scrapeAmazonSA, normalizeUrl } = require('./scraper');
+const { scrapeAmazonSA, scrapeAliExpress, normalizeUrl } = require('./scraper');
 const { startScheduler, restartScheduler, runAllChecks, checkItem, sendTelegram } = require('./scheduler');
 
 const app = express();
@@ -106,7 +106,7 @@ app.post('/api/items', requireAuth, async (req, res) => {
   if (!input?.trim()) return res.status(400).json({ error: 'Product URL or ASIN is required' });
 
   const normalized = normalizeUrl(input.trim());
-  if (!normalized) return res.status(400).json({ error: 'Could not parse a valid Amazon SA URL or ASIN' });
+  if (!normalized) return res.status(400).json({ error: 'Could not parse a valid Amazon SA URL/ASIN or AliExpress product URL' });
   const { url, asin, store } = normalized;
 
   const existing = db.prepare('SELECT id FROM items WHERE user_id = ? AND url = ?').get(req.user.id, url);
@@ -117,7 +117,7 @@ app.post('/api/items', requireAuth, async (req, res) => {
   let imageUrl = null;
   let scraped = null;
   try {
-    scraped = await scrapeAmazonSA(url);
+    scraped = store === 'aliexpress' ? await scrapeAliExpress(url) : await scrapeAmazonSA(url);
     if (!finalName && scraped.title) finalName = scraped.title;
     imageUrl = scraped.imageUrl || null;
   } catch (e) {
@@ -126,7 +126,7 @@ app.post('/api/items', requireAuth, async (req, res) => {
 
   if (!finalName) {
     return res.status(400).json({
-      error: 'Could not auto-detect product name (scraping failed). Please enter a name manually.',
+      error: 'Could not auto-detect product name (scraping failed or bot-blocked). Please enter a name manually.',
     });
   }
 

@@ -23,6 +23,7 @@
       --text: #f1f5f9;
       --muted: #94a3b8;
       --amazon: #ff9900;
+      --aliexpress: #e62e04;
       --prime: #00a8e1;
       --card-r: 14px;
     }
@@ -320,7 +321,11 @@ function renderDashboard() {
 }
 
 function storeLabel(item) {
-  return 'Amazon SA';
+  return item.store === 'aliexpress' ? 'AliExpress' : 'Amazon SA';
+}
+
+function storeColor(item) {
+  return item.store === 'aliexpress' ? 'var(--aliexpress)' : 'var(--amazon)';
 }
 
 function itemCurrency(item) {
@@ -363,7 +368,7 @@ function renderEmpty() {
   return `<div class="empty">
     <div class="empty-icon">📦</div>
     <h2>No items yet</h2>
-    <p>Add products from Amazon Saudi Arabia to start tracking their prices.</p>
+    <p>Add products from Amazon Saudi Arabia or AliExpress to start tracking their prices.</p>
     <button class="btn btn-primary" data-action="open-add-item">+ Add Your First Item</button>
   </div>`;
 }
@@ -412,7 +417,7 @@ function renderCard(item) {
       ${imageHtml}
       <div class="card-img-placeholder" style="${placeholderStyle}">📦</div>
       <div class="card-meta">
-        <div class="card-store">${storeLabel(item)}</div>
+        <div class="card-store" style="color:${storeColor(item)}">${storeLabel(item)}</div>
         <div class="card-name">${escHtml(item.name)}</div>
       </div>
     </div>
@@ -466,8 +471,8 @@ function openAddItemSheet() {
     <div id="add-msg"></div>
     <div class="form-group">
       <label>Product URL or ASIN *</label>
-      <input type="text" id="item-input" placeholder="amazon.sa URL or ASIN" autocomplete="off">
-      <div class="hint">Paste an Amazon SA product URL, or just the 10-character ASIN.</div>
+      <input type="text" id="item-input" placeholder="amazon.sa URL, ASIN, or aliexpress.com URL" autocomplete="off">
+      <div class="hint">Paste an Amazon SA product URL or ASIN, or an AliExpress product URL.</div>
     </div>
     <div class="form-group">
       <label>Name (optional — auto-detected)</label>
@@ -544,8 +549,9 @@ function renderHistorySheet(item, allHistory, validHistory) {
   const lowestPrice = validHistory.length ? Math.min(...validHistory.map(h => h.price)) : null;
 
   const historyCur = validHistory[0]?.currency || 'SAR';
-  const storeLink = 'View on Amazon ↗';
-  const itemIdLabel = `ASIN: ${item.asin || '—'}`;
+  const isAliExpress = item.store === 'aliexpress';
+  const storeLink = isAliExpress ? 'View on AliExpress ↗' : 'View on Amazon ↗';
+  const itemIdLabel = isAliExpress ? 'AliExpress' : `ASIN: ${item.asin || '—'}`;
 
   document.getElementById('sheet-title').textContent = item.name;
   document.getElementById('sheet-body').innerHTML = `
@@ -555,8 +561,11 @@ function renderHistorySheet(item, allHistory, validHistory) {
     </div>
 
     <div class="chart-legend">
-      <div class="chart-legend-item"><div class="chart-legend-dot" style="background:var(--accent)"></div> Amazon SA direct</div>
-      <div class="chart-legend-item"><div class="chart-legend-dot" style="background:var(--amazon)"></div> Third-party seller</div>
+      ${isAliExpress
+        ? `<div class="chart-legend-item"><div class="chart-legend-dot" style="background:var(--aliexpress)"></div> AliExpress price</div>`
+        : `<div class="chart-legend-item"><div class="chart-legend-dot" style="background:var(--accent)"></div> Amazon SA direct</div>
+           <div class="chart-legend-item"><div class="chart-legend-dot" style="background:var(--amazon)"></div> Third-party seller</div>`
+      }
       ${lowestPrice != null ? `<div class="chart-legend-item"><div class="chart-legend-dot" style="background:var(--success)"></div> Lowest: ${historyCur} ${fmtPrice(lowestPrice)}</div>` : ''}
       ${item.target_price != null ? `<div class="chart-legend-item"><div class="chart-legend-dot" style="background:var(--warning)"></div> Target: ${historyCur} ${fmtPrice(item.target_price)}</div>` : ''}
     </div>
@@ -602,7 +611,9 @@ function renderHistorySheet(item, allHistory, validHistory) {
   if (validHistory.length === 0) return;
   const labels = validHistory.map(h => new Date(h.checked_at).toLocaleDateString('en-SA'));
   const prices = validHistory.map(h => h.price);
-  const pointColors = validHistory.map(h => h.is_amazon_direct ? '#3b82f6' : '#ff9900');
+  const pointColors = validHistory.map(h =>
+    isAliExpress ? '#e62e04' : (h.is_amazon_direct ? '#3b82f6' : '#ff9900')
+  );
 
   const ctx = document.getElementById('price-chart').getContext('2d');
   if (state.sheetChart) state.sheetChart.destroy();
@@ -649,7 +660,9 @@ function renderHistorySheet(item, allHistory, validHistory) {
             title: (items) => items[0].label,
             label: (ctx) => {
               const h = validHistory[ctx.dataIndex];
-              const seller = h.is_amazon_direct ? 'Amazon SA' : (h.seller_name || 'Seller');
+              const seller = isAliExpress
+                ? (h.seller_name || 'AliExpress')
+                : (h.is_amazon_direct ? 'Amazon SA' : (h.seller_name || 'Seller'));
               return [`${historyCur} ${fmtPrice(ctx.raw)}`, `Seller: ${seller}`, h.is_prime ? 'Prime ⚡' : ''];
             },
           },
