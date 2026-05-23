@@ -211,26 +211,52 @@ async function scrapeAmazonSA(url) {
 
 // ── AliExpress scraper ────────────────────────────────────────────────────────
 
-function extractRunParams(html) {
-  const idx = html.indexOf('window.runParams');
-  if (idx === -1) return null;
-  const start = html.indexOf('{', idx);
-  if (start === -1) return null;
-  let depth = 0;
-  for (let i = start; i < html.length; i++) {
-    if (html[i] === '{') depth++;
-    else if (html[i] === '}') {
-      depth--;
-      if (depth === 0) {
-        try { return JSON.parse(html.slice(start, i + 1)); }
-        catch (_) { return null; }
+// Cache homepage cookies for 5 min so each product check doesn't need a warm-up request
+let _aliCookies = '';
+let _aliCookiesAt = 0;
+
+async function fetchAliCookies() {
+  if (_aliCookies && Date.now() - _aliCookiesAt < 300_000) return _aliCookies;
+  try {
+    const res = await axios.get('https://www.aliexpress.com/', {
+      headers: {
+        'User-Agent': getRandomUA(),
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br',
+      },
+      timeout: 12000,
+      maxRedirects: 3,
+    });
+    const raw = res.headers['set-cookie'];
+    if (raw) { _aliCookies = raw.map(c => c.split(';')[0]).join('; '); _aliCookiesAt = Date.now(); }
+  } catch (_) {}
+  return _aliCookies;
+}
+
+// Try multiple known window variable names AliExpress has used across versions
+function extractWindowVar(html) {
+  for (const name of ['runParams', '__INITIAL_STATE__', '_init_data_', 'g_page_pc_detail', '__aer_data', 'AER_DATA']) {
+    const idx = html.indexOf(`window.${name}`);
+    if (idx === -1) continue;
+    const start = html.indexOf('{', idx);
+    if (start === -1) continue;
+    let depth = 0;
+    for (let i = start; i < html.length; i++) {
+      if (html[i] === '{') depth++;
+      else if (html[i] === '}') {
+        depth--;
+        if (depth === 0) {
+          try { return { name, data: JSON.parse(html.slice(start, i + 1)) }; }
+          catch (_) { break; }
+        }
       }
     }
   }
   return null;
 }
 
-function parseRunParamsData(rp) {
+function parseRunParamsData({ data: rp } = {}) {
   const d = rp?.data || rp;
   const title = d?.titleModule?.subject || null;
   if (!title) return null;
@@ -344,88 +370,156 @@ function parseAliMeta($, html) {
 }
 
 function rawCurrencyScan(html) {
-  for (const [re, cur] of [[/SAR\s+([\d,]+\.?\d*)/g, 'SAR'], [/US\s*\$\s*([\d,]+\.?\d*)/g, 'USD']]) {
-    const vals = [...html.matchAll(re)].map(m => parseFloat(m[1].replace(/,/g, ''))).filter(n => !isNaN(n) && n > 0 && n < 100000);
+  for (const [re, cur] of [
+    [/SAR\s+([\d,]+\.?\d*)/g, 'SAR'],
+    [/([\d,]+\.?\d*)\s*SAR/g, 'SAR'],
+    [/US\s*\$\s*([\d,]+\.?\d*)/g, 'USD'],
+  ]) {
+    const vals = [...html.matchAll(re)]
+      .map(m => parseFloat((m[1] || m[2]).replace(/,/g, '')))
+      .filter(n => !isNaN(n) && n > 0.5 && n < 100000);
     if (vals.length > 0) return { price: Math.min(...vals), currency: cur };
   }
   return null;
 }
 
+// Generic recursive price finder — last resort when structure is unknown
+function findPriceInData(obj, depth = 0) {
+  if (depth > 8 || !obj || typeof obj !== 'object') return null;
+  const priceKeys = ['minActivityAmount', 'skuActivityAmount', 'salePrice', 'activityPrice',
+                     'minAmount', 'skuAmount', 'price', 'amount', 'value'];
+  for (const key of priceKeys) {
+    if (obj[key] == null) continue;
+    const v = obj[key];
+    if (typeof v === 'number' && v > 0 && v < 100000) return v;
+    if (typeof v === 'string') { const n = parseFloat(v); if (!isNaN(n) && n > 0 && n < 100000) return n; }
+    if (typeof v === 'object' && v.value != null) {
+      const n = parseFloat(v.value);
+      if (!isNaN(n) && n > 0 && n < 100000) return n;
+    }
+  }
+  for (const val of Object.values(obj)) {
+    if (val && typeof val === 'object') {
+      const found = findPriceInData(val, depth + 1);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+async function tryFetchAli(url, cookies, lang = 'en-US,en;q=0.9') {
+  const { data, status } = await axios.get(url, {
+    headers: {
+      'User-Agent': getRandomUA(),
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+      'Accept-Language': lang,
+      'Accept-Encoding': 'gzip, deflate, br',
+      'Connection': 'keep-alive',
+      'Referer': 'https://www.aliexpress.com/',
+      'Upgrade-Insecure-Requests': '1',
+      'Sec-Fetch-Dest': 'document',
+      'Sec-Fetch-Mode': 'navigate',
+      'Sec-Fetch-Site': 'same-origin',
+      'Cache-Control': 'no-cache',
+      ...(cookies ? { Cookie: cookies } : {}),
+    },
+    timeout: 25000,
+    maxRedirects: 5,
+  });
+  if (status !== 200) throw new Error(`HTTP ${status}`);
+  return data;
+}
+
+function parseAliHtml(html) {
+  const $ = cheerio.load(html);
+  let bestTitle = null, bestImage = null;
+
+  // Strategy 1: JSON-LD
+  const jsonLd = parseJsonLd($);
+  if (jsonLd?.title && jsonLd?.price) {
+    console.log('[aliexpress] price via JSON-LD');
+    return { ...jsonLd, currency: jsonLd.currency || 'USD', isAmazonDirect: false, isPrime: false };
+  }
+  if (jsonLd?.title) { bestTitle = jsonLd.title; bestImage = jsonLd.imageUrl || null; }
+
+  // Strategy 2: any embedded window var (runParams, __INITIAL_STATE__, etc.)
+  const winVar = extractWindowVar(html);
+  if (winVar) {
+    const result = parseRunParamsData(winVar);
+    if (result?.title && result?.price != null) { console.log(`[aliexpress] price via window.${winVar.name}`); return result; }
+    // Even if no price, use title/image from it and also try generic walker
+    if (result?.title) { bestTitle = bestTitle || result.title; bestImage = bestImage || result.imageUrl; }
+    if (!result?.price) {
+      const genericPrice = findPriceInData(winVar.data);
+      if (genericPrice && (result?.title || bestTitle)) {
+        console.log(`[aliexpress] price via generic walk of window.${winVar.name}`);
+        const cur = winVar.data?.data?.priceModule?.minAmount?.currency || 'USD';
+        return {
+          title: result?.title || bestTitle,
+          price: genericPrice,
+          originalPrice: null,
+          currency: cur,
+          sellerName: result?.sellerName || null,
+          isAmazonDirect: false,
+          isPrime: false,
+          inStock: result?.inStock ?? true,
+          imageUrl: result?.imageUrl || bestImage || null,
+        };
+      }
+    }
+  }
+
+  // Strategy 3: __NEXT_DATA__
+  const nextResult = parseAliNextData($);
+  if (nextResult?.title && nextResult?.price != null) { console.log('[aliexpress] price via __NEXT_DATA__'); return nextResult; }
+  if (nextResult?.title) { bestTitle = bestTitle || nextResult.title; bestImage = bestImage || nextResult.imageUrl; }
+
+  // Strategy 4: meta tags + regex
+  const metaResult = parseAliMeta($, html);
+  if (metaResult?.title && metaResult?.price != null) { console.log('[aliexpress] price via meta/regex'); return metaResult; }
+  if (metaResult?.title) { bestTitle = bestTitle || metaResult.title; bestImage = bestImage || metaResult.imageUrl; }
+
+  // Strategy 5: raw currency scan with best title accumulated
+  const finalTitle = bestTitle || $('title').text().replace(/\s*\|.*$|\s*-\s*AliExpress.*$/i, '').trim() || null;
+  const raw = rawCurrencyScan(html);
+  if (finalTitle && raw) {
+    console.log('[aliexpress] price via raw currency scan');
+    return {
+      title: finalTitle, price: raw.price, originalPrice: null, currency: raw.currency,
+      sellerName: null, isAmazonDirect: false, isPrime: false, inStock: true,
+      imageUrl: bestImage || $('meta[property="og:image"]').attr('content') || null,
+    };
+  }
+
+  console.log(`[aliexpress] all strategies failed — title=${!!finalTitle} price=none (page may be bot-blocked)`);
+  return null;
+}
+
 async function scrapeAliExpress(url) {
+  // Warm up session cookies to reduce bot-detection false positives
+  const cookies = await fetchAliCookies();
+
+  // Try: English www → Arabic ar (which shows SAR prices and may have different SSR)
+  const itemId = url.match(/\/item\/(\d+)/)?.[1];
+  const urlsToTry = [
+    { u: url, lang: 'en-US,en;q=0.9' },
+    ...(itemId ? [{ u: `https://ar.aliexpress.com/item/${itemId}.html`, lang: 'ar-SA,ar;q=0.9,en;q=0.8' }] : []),
+  ];
+
   let lastError;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    if (attempt > 0) await new Promise(r => setTimeout(r, 3000 * attempt));
-    try {
-      const { data, status } = await axios.get(url, {
-        headers: {
-          'User-Agent': getRandomUA(),
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-          'Accept-Language': 'en-US,en;q=0.9',
-          'Accept-Encoding': 'gzip, deflate, br',
-          'Connection': 'keep-alive',
-          'Upgrade-Insecure-Requests': '1',
-          'Cache-Control': 'no-cache',
-        },
-        timeout: 25000,
-        maxRedirects: 5,
-      });
-
-      if (status !== 200) throw new Error(`HTTP ${status}`);
-
-      const $ = cheerio.load(data);
-
-      // Track best partial result across strategies for the final fallback
-      let bestTitle = null, bestImage = null;
-
-      // Strategy 1: JSON-LD (cleanest if available)
-      const jsonLd = parseJsonLd($);
-      if (jsonLd?.title && jsonLd?.price) {
-        console.log('[aliexpress] price via JSON-LD');
-        return { ...jsonLd, currency: jsonLd.currency || 'USD', isAmazonDirect: false, isPrime: false };
+  for (const { u, lang } of urlsToTry) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (attempt > 0) await new Promise(r => setTimeout(r, 4000));
+      try {
+        const html = await tryFetchAli(u, cookies, lang);
+        const result = parseAliHtml(html);
+        if (result?.title && result?.price != null) return result;
+        // Got title but no price — continue to next URL variant
+        lastError = new Error('Could not parse AliExpress product data from page');
+      } catch (err) {
+        lastError = err;
+        console.error(`[aliexpress] fetch error (${u}): ${err.message}`);
       }
-      if (jsonLd?.title) { bestTitle = jsonLd.title; bestImage = jsonLd.imageUrl || null; }
-
-      // Strategy 2: window.runParams embedded JSON
-      const runParams = extractRunParams(data);
-      if (runParams) {
-        const result = parseRunParamsData(runParams);
-        if (result?.title && result?.price != null) { console.log('[aliexpress] price via runParams'); return result; }
-        if (result?.title) { bestTitle = bestTitle || result.title; bestImage = bestImage || result.imageUrl; }
-      }
-
-      // Strategy 3: Next.js __NEXT_DATA__
-      const nextResult = parseAliNextData($);
-      if (nextResult?.title && nextResult?.price != null) { console.log('[aliexpress] price via __NEXT_DATA__'); return nextResult; }
-      if (nextResult?.title) { bestTitle = bestTitle || nextResult.title; bestImage = bestImage || nextResult.imageUrl; }
-
-      // Strategy 4: meta tags + regex price scan
-      const metaResult = parseAliMeta($, data);
-      if (metaResult?.title && metaResult?.price != null) { console.log('[aliexpress] price via meta/regex'); return metaResult; }
-      if (metaResult?.title) { bestTitle = bestTitle || metaResult.title; bestImage = bestImage || metaResult.imageUrl; }
-
-      // Strategy 5: best accumulated title + raw currency scan
-      const finalTitle = bestTitle || $('title').text().replace(/\s*[-|].*$/, '').trim() || null;
-      console.log(`[aliexpress] strategies 1-4 found title=${!!finalTitle} price=none, trying raw scan`);
-      if (finalTitle) {
-        const raw = rawCurrencyScan(data);
-        if (raw) {
-          return {
-            title: finalTitle,
-            price: raw.price,
-            originalPrice: null,
-            currency: raw.currency,
-            sellerName: null,
-            isAmazonDirect: false,
-            isPrime: false,
-            inStock: true,
-            imageUrl: bestImage || $('meta[property="og:image"]').attr('content') || null,
-          };
-        }
-      }
-
-      throw new Error('Could not parse AliExpress product data from page');
-    } catch (err) {
-      lastError = err;
     }
   }
   throw lastError || new Error('AliExpress scraping failed');
