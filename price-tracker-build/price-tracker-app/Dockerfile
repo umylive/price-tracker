@@ -1,11 +1,10 @@
-FROM node:24-alpine
+FROM node:24-slim
 
-RUN apk add --no-cache \
+# chromium pulls all glibc deps that Puppeteer's bundled Chrome needs at runtime
+RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 make g++ tini \
-    chromium nss freetype harfbuzz ca-certificates ttf-freefont
-
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
-ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
+    chromium \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
@@ -23,5 +22,5 @@ EXPOSE 3000
 
 VOLUME ["/data"]
 
-ENTRYPOINT ["/sbin/tini", "--"]
+ENTRYPOINT ["tini", "--"]
 CMD ["node", "backend/server.js"]
