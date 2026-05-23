@@ -332,6 +332,53 @@ function parseAliMeta($, html) {
   };
 }
 
+function parseAliScriptBlobs(html) {
+  // Scan all inline scripts for any JSON object containing a product title and price.
+  // Covers window.__STORE__, window.__INITIAL_STATE__, window._dux_, etc.
+  const scriptRe = /<script[^>]*>([\s\S]*?)<\/script>/gi;
+  let m;
+  while ((m = scriptRe.exec(html)) !== null) {
+    const src = m[1];
+    if (!src.includes('productId') && !src.includes('itemId') && !src.includes('subject')) continue;
+    // Try to extract any JSON object from the script that has a recognisable title field
+    const jsonRe = /\{[\s\S]{50,}/g;
+    let jm;
+    while ((jm = jsonRe.exec(src)) !== null) {
+      let obj;
+      try {
+        // Walk backwards until valid JSON
+        for (let end = jm.index + jm[0].length; end <= src.length; end++) {
+          try { obj = JSON.parse(src.slice(jm.index, end)); break; } catch {}
+        }
+      } catch {}
+      if (!obj) continue;
+      const flat = JSON.stringify(obj);
+      if (!flat.includes('"subject"') && !flat.includes('"title"') && !flat.includes('"name"')) continue;
+      const title = obj?.subject || obj?.title || obj?.name ||
+                    obj?.data?.subject || obj?.data?.title ||
+                    obj?.product?.subject || obj?.product?.title || null;
+      if (!title || typeof title !== 'string' || title.length < 5) continue;
+      const priceRaw = obj?.salePrice?.minPrice || obj?.price?.minPrice ||
+                       obj?.data?.price?.minPrice || obj?.product?.salePrice ||
+                       null;
+      const price = priceRaw != null ? parsePrice(String(priceRaw)) : null;
+      if (!price) continue;
+      return {
+        title,
+        price,
+        originalPrice: null,
+        currency: 'USD',
+        sellerName: obj?.sellerInfo?.storeName || obj?.storeInfo?.storeName || null,
+        isAmazonDirect: false,
+        isPrime: false,
+        inStock: true,
+        imageUrl: obj?.imageUrl || obj?.images?.[0] || null,
+      };
+    }
+  }
+  return null;
+}
+
 async function scrapeAliExpress(url) {
   console.log(`[aliexpress] fetching: ${url}`);
   let lastError;
@@ -359,27 +406,52 @@ async function scrapeAliExpress(url) {
 
       const $ = cheerio.load(html);
 
+      // Diagnose what we're working with
+      const markers = {
+        cf: html.includes('cf-browser-verification') || html.includes('Just a moment'),
+        captcha: html.includes('captcha') || html.includes('_Captcha'),
+        runParams: html.includes('window.runParams'),
+        nextData: html.includes('__NEXT_DATA__'),
+        ld: html.includes('"@type":"Product"') || html.includes('"@type": "Product"'),
+        store: html.includes('window.__STORE__') || html.includes('window.__INITIAL_STATE__'),
+        subject: html.includes('"subject"'),
+        salePrice: html.includes('salePrice') || html.includes('sale_price'),
+      };
+      console.log(`[aliexpress] page ${html.length}b — ${JSON.stringify(markers)}`);
+
+      if (markers.cf || markers.captcha) {
+        throw new Error('Bot/CAPTCHA page detected — AliExpress blocked the request');
+      }
+
       // Strategy 1: JSON-LD structured data
       const ld = parseJsonLd($);
       if (ld?.title && ld?.price != null) {
+        console.log('[aliexpress] parsed via JSON-LD');
         return { ...ld, isAmazonDirect: false, isPrime: false };
       }
 
       // Strategy 2: window.runParams embedded JS object
       const rp = parseAliRunParams(html);
-      if (rp?.title) return rp;
+      if (rp?.title) { console.log('[aliexpress] parsed via runParams'); return rp; }
 
       // Strategy 3: __NEXT_DATA__ (Next.js SSR)
       const nd = parseAliNextData(html);
-      if (nd?.title) return nd;
+      if (nd?.title) { console.log('[aliexpress] parsed via NEXT_DATA'); return nd; }
 
-      // Strategy 4: og: meta tags + regex price scan
+      // Strategy 4: broader script blob scan (window.__STORE__ etc.)
+      const sb = parseAliScriptBlobs(html);
+      if (sb?.title) { console.log('[aliexpress] parsed via script blob'); return sb; }
+
+      // Strategy 5: og: meta tags + regex price scan
       const meta = parseAliMeta($, html);
-      if (meta?.title) return meta;
+      if (meta?.title) { console.log('[aliexpress] parsed via og:meta'); return meta; }
 
+      // Log a snippet to help diagnose unknown page structures
+      console.log('[aliexpress] parse failed — page snippet:', html.slice(0, 500).replace(/\s+/g, ' '));
       throw new Error('Could not extract product data from AliExpress page');
     } catch (err) {
       lastError = err;
+      if (err.message.includes('Bot/CAPTCHA')) break;
       console.error(`[aliexpress] attempt ${attempt + 1} failed: ${err.message}`);
     }
   }
