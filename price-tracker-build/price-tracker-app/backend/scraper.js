@@ -221,6 +221,7 @@ async function scrapeAliExpress(url) {
   const result = await scrape(itemId, {
     reviewsCount: 0,
     puppeteerOptions: {
+      executablePath: '/usr/bin/chromium',
       args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
     },
     timeout: 60000,
