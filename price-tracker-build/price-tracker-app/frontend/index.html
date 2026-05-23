@@ -559,9 +559,8 @@ function renderHistorySheet(item, allHistory, validHistory) {
     </div>
 
     <div class="chart-legend">
-      `<div class="chart-legend-item"><div class="chart-legend-dot" style="background:var(--accent)"></div> Amazon SA direct</div>
-       <div class="chart-legend-item"><div class="chart-legend-dot" style="background:var(--amazon)"></div> Third-party seller</div>`
-      }
+      <div class="chart-legend-item"><div class="chart-legend-dot" style="background:var(--accent)"></div> Amazon SA direct</div>
+      <div class="chart-legend-item"><div class="chart-legend-dot" style="background:var(--amazon)"></div> Third-party seller</div>
       ${lowestPrice != null ? `<div class="chart-legend-item"><div class="chart-legend-dot" style="background:var(--success)"></div> Lowest: ${historyCur} ${fmtPrice(lowestPrice)}</div>` : ''}
       ${item.target_price != null ? `<div class="chart-legend-item"><div class="chart-legend-dot" style="background:var(--warning)"></div> Target: ${historyCur} ${fmtPrice(item.target_price)}</div>` : ''}
     </div>
