@@ -23,11 +23,23 @@ function extractASIN(input) {
   return m ? m[1].toUpperCase() : null;
 }
 
+function extractAliExpressItemId(input) {
+  if (!input) return null;
+  const m = input.match(/\/(?:item|i)\/(\d+)(?:\.html|[/?]|$)/i);
+  return m ? m[1] : null;
+}
+
 function normalizeUrl(input) {
   if (!input) return null;
-  const asin = extractASIN(input.trim());
-  if (asin) return { url: `https://www.amazon.sa/-/en/dp/${asin}`, asin };
-  if (input.includes('amazon.sa')) return { url: input.trim(), asin: null };
+  const trimmed = input.trim();
+  if (trimmed.includes('aliexpress.com')) {
+    const itemId = extractAliExpressItemId(trimmed);
+    if (itemId) return { url: `https://www.aliexpress.com/item/${itemId}.html`, asin: null, store: 'aliexpress' };
+    return { url: trimmed, asin: null, store: 'aliexpress' };
+  }
+  const asin = extractASIN(trimmed);
+  if (asin) return { url: `https://www.amazon.sa/-/en/dp/${asin}`, asin, store: 'amazon_sa' };
+  if (trimmed.includes('amazon.sa')) return { url: trimmed, asin: null, store: 'amazon_sa' };
   return null;
 }
 
@@ -198,4 +210,97 @@ async function scrapeAmazonSA(url) {
   throw lastError || new Error('Scraping failed');
 }
 
-module.exports = { scrapeAmazonSA, normalizeUrl, extractASIN };
+function parseAliExpressHtml(html, $) {
+  const title = $('meta[property="og:title"]').attr('content')?.replace(/\s*[-|]\s*AliExpress.*$/i, '').trim() ||
+                $('title').text().replace(/\s*[-|]\s*AliExpress.*$/i, '').trim() || null;
+  if (!title) return null;
+
+  let price = null;
+  const pricePatterns = [
+    /"formatedActivityPrice"\s*:\s*"([^"]+)"/,
+    /"formatedPrice"\s*:\s*"([^"]+)"/,
+    /"minPrice"\s*:\s*"([^"]+)"/,
+    /"salePrice"\s*:\s*"([^"]+)"/,
+  ];
+  for (const pat of pricePatterns) {
+    const m = html.match(pat);
+    if (m) { const p = parsePrice(m[1]); if (p != null) { price = p; break; } }
+  }
+  if (price == null) {
+    const mp = $('meta[itemprop="price"]').attr('content');
+    if (mp) price = parseFloat(mp) || null;
+  }
+
+  let originalPrice = null;
+  const origMatch = html.match(/"formatedOriginalPrice"\s*:\s*"([^"]+)"/) ||
+                    html.match(/"originalPriceStr"\s*:\s*"([^"]+)"/);
+  if (origMatch) { const op = parsePrice(origMatch[1]); if (op != null && op !== price) originalPrice = op; }
+
+  let currency = $('meta[itemprop="priceCurrency"]').attr('content') || 'USD';
+  const currMatch = html.match(/"priceCurrency"\s*:\s*"([A-Z]{3})"/) ||
+                    html.match(/"currency"\s*:\s*"([A-Z]{3})"/);
+  if (currMatch) currency = currMatch[1];
+
+  const imageUrl = $('meta[property="og:image"]').attr('content') ||
+                   $('meta[name="twitter:image"]').attr('content') || null;
+
+  const stockMatch = html.match(/"(?:totalAvail|avail)Quantity"\s*:\s*(\d+)/);
+  const inStock = stockMatch ? parseInt(stockMatch[1]) > 0 : true;
+
+  const sellerMatch = html.match(/"storeName"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+  let sellerName = null;
+  if (sellerMatch) {
+    try { sellerName = JSON.parse('"' + sellerMatch[1] + '"'); } catch (_) { sellerName = sellerMatch[1]; }
+  }
+
+  return { title, price, originalPrice, currency, sellerName, isAmazonDirect: false, isPrime: false, inStock, imageUrl };
+}
+
+async function scrapeAliExpress(url) {
+  let lastError;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) await new Promise(r => setTimeout(r, 2000 * attempt));
+    try {
+      const { data, status } = await axios.get(url, {
+        headers: {
+          'User-Agent': getRandomUA(),
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.9',
+          'Accept-Encoding': 'gzip, deflate, br',
+          'Connection': 'keep-alive',
+          'Cache-Control': 'no-cache',
+          'Sec-Fetch-Dest': 'document',
+          'Sec-Fetch-Mode': 'navigate',
+          'Sec-Fetch-Site': 'none',
+        },
+        timeout: 25000,
+        maxRedirects: 5,
+      });
+
+      if (status !== 200) throw new Error(`HTTP ${status}`);
+
+      const $ = cheerio.load(data);
+
+      if (data.includes('_captcha_') || data.includes('anti-hotlinking') ||
+          ($('title').text().toLowerCase().includes('verify') && !$('meta[property="og:title"]').length)) {
+        lastError = new Error('Bot/CAPTCHA detected — AliExpress blocked the request');
+        break;
+      }
+
+      const result = parseJsonLd($) || parseAliExpressHtml(data, $);
+      if (!result?.title) throw new Error('Could not parse product data from AliExpress page');
+      // parseJsonLd defaults currency to SAR; override for AliExpress
+      if (result.currency === 'SAR' && !data.includes('"priceCurrency":"SAR"') &&
+          !data.includes('"currency":"SAR"') && !$('meta[itemprop="priceCurrency"][content="SAR"]').length) {
+        result.currency = 'USD';
+      }
+      return result;
+    } catch (err) {
+      lastError = err;
+      if (err.message.includes('CAPTCHA') || err.message.includes('Bot/CAPTCHA')) break;
+    }
+  }
+  throw lastError || new Error('AliExpress scraping failed');
+}
+
+module.exports = { scrapeAmazonSA, scrapeAliExpress, normalizeUrl, extractASIN };

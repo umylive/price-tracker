@@ -6,7 +6,7 @@ const {
   hashPassword, verifyPassword, createSession, getSession,
   deleteSession, isRateLimited, recordLoginAttempt, requireAuth,
 } = require('./auth');
-const { scrapeAmazonSA, normalizeUrl } = require('./scraper');
+const { scrapeAmazonSA, scrapeAliExpress, normalizeUrl } = require('./scraper');
 const { startScheduler, restartScheduler, runAllChecks, checkItem, sendTelegram } = require('./scheduler');
 
 const app = express();
@@ -103,11 +103,11 @@ app.get('/api/items', requireAuth, (req, res) => {
 
 app.post('/api/items', requireAuth, async (req, res) => {
   const { name, input, target_price, notify_drop_percent } = req.body || {};
-  if (!input?.trim()) return res.status(400).json({ error: 'Amazon URL or ASIN is required' });
+  if (!input?.trim()) return res.status(400).json({ error: 'Product URL or ASIN is required' });
 
   const normalized = normalizeUrl(input.trim());
-  if (!normalized) return res.status(400).json({ error: 'Could not parse a valid Amazon SA URL or ASIN' });
-  const { url, asin } = normalized;
+  if (!normalized) return res.status(400).json({ error: 'Could not parse a valid Amazon SA URL/ASIN or AliExpress URL' });
+  const { url, asin, store } = normalized;
 
   const existing = db.prepare('SELECT id FROM items WHERE user_id = ? AND url = ?').get(req.user.id, url);
   if (existing) return res.status(400).json({ error: 'This item is already being tracked' });
@@ -117,7 +117,7 @@ app.post('/api/items', requireAuth, async (req, res) => {
   let imageUrl = null;
   let scraped = null;
   try {
-    scraped = await scrapeAmazonSA(url);
+    scraped = store === 'aliexpress' ? await scrapeAliExpress(url) : await scrapeAmazonSA(url);
     if (!finalName && scraped.title) finalName = scraped.title;
     imageUrl = scraped.imageUrl || null;
   } catch (e) {
@@ -131,10 +131,10 @@ app.post('/api/items', requireAuth, async (req, res) => {
   }
 
   const { lastInsertRowid } = db.prepare(`
-    INSERT INTO items (user_id, name, url, asin, image_url, target_price, notify_drop_percent)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO items (user_id, name, url, asin, image_url, store, target_price, notify_drop_percent)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
-    req.user.id, finalName, url, asin, imageUrl,
+    req.user.id, finalName, url, asin, imageUrl, store,
     target_price ? parseFloat(target_price) : null,
     notify_drop_percent ? parseFloat(notify_drop_percent) : 5
   );

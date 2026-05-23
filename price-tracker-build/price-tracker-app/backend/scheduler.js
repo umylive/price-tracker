@@ -1,6 +1,6 @@
 const cron = require('node-cron');
 const db = require('./database');
-const { scrapeAmazonSA } = require('./scraper');
+const { scrapeAmazonSA, scrapeAliExpress } = require('./scraper');
 
 let currentTask = null;
 
@@ -30,7 +30,9 @@ async function checkItem(item) {
   console.log(`[check] ${item.name}`);
   let scraped;
   try {
-    scraped = await scrapeAmazonSA(item.url);
+    scraped = item.store === 'aliexpress'
+      ? await scrapeAliExpress(item.url)
+      : await scrapeAmazonSA(item.url);
   } catch (err) {
     db.prepare("INSERT INTO price_history (item_id, error, in_stock) VALUES (?, ?, 0)").run(item.id, err.message);
     db.prepare("UPDATE items SET last_checked_at = datetime('now') WHERE id = ?").run(item.id);
@@ -61,7 +63,7 @@ async function checkItem(item) {
   }
   db.prepare("UPDATE items SET last_checked_at = datetime('now') WHERE id = ?").run(item.id);
 
-  console.log(`  [ok] SAR ${scraped.price} | seller: ${scraped.sellerName} | inStock: ${scraped.inStock}`);
+  console.log(`  [ok] ${scraped.currency || 'SAR'} ${scraped.price} | seller: ${scraped.sellerName} | inStock: ${scraped.inStock}`);
 
   const settings = {};
   db.prepare('SELECT key, value FROM settings').all().forEach(r => { settings[r.key] = r.value; });
@@ -92,6 +94,7 @@ async function checkItem(item) {
 }
 
 function buildDropMsg(item, scraped, prevPrice, dropPct) {
+  const cur = scraped.currency || 'SAR';
   const seller = scraped.isAmazonDirect
     ? '✅ Sold by <b>Amazon SA</b> directly'
     : `🏪 Seller: ${scraped.sellerName || 'Third-party seller'}`;
@@ -99,13 +102,13 @@ function buildDropMsg(item, scraped, prevPrice, dropPct) {
   const target = item.target_price != null && scraped.price <= item.target_price
     ? '\n🎯 <b>Hit your target price!</b>' : '';
   const orig = scraped.originalPrice && scraped.originalPrice > scraped.price
-    ? `\n🏷 List price: SAR ${scraped.originalPrice.toFixed(2)}` : '';
+    ? `\n🏷 List price: ${cur} ${scraped.originalPrice.toFixed(2)}` : '';
   return [
     '📉 <b>Price Drop Alert!</b>',
     '',
     `📦 ${item.name}`,
-    `💰 Now: <b>SAR ${scraped.price.toFixed(2)}</b>`,
-    `📊 Was: SAR ${prevPrice.toFixed(2)} (↓${dropPct.toFixed(1)}%)${orig}`,
+    `💰 Now: <b>${cur} ${scraped.price.toFixed(2)}</b>`,
+    `📊 Was: ${cur} ${prevPrice.toFixed(2)} (↓${dropPct.toFixed(1)}%)${orig}`,
     seller + prime + target,
     '',
     `🔗 ${item.url}`,
@@ -116,7 +119,7 @@ function buildStockMsg(item, scraped) {
   const seller = scraped.isAmazonDirect
     ? '✅ Sold by <b>Amazon SA</b> directly'
     : `🏪 Seller: ${scraped.sellerName || 'Third-party seller'}`;
-  const priceStr = scraped.price != null ? `SAR ${scraped.price.toFixed(2)}` : 'N/A';
+  const priceStr = scraped.price != null ? `${scraped.currency || 'SAR'} ${scraped.price.toFixed(2)}` : 'N/A';
   return [
     '✅ <b>Back in Stock!</b>',
     '',

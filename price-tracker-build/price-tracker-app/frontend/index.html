@@ -313,11 +313,20 @@ function renderDashboard() {
     </div>`;
 }
 
+function storeLabel(item) {
+  if (item.store === 'aliexpress') return 'AliExpress';
+  return 'Amazon SA';
+}
+
+function itemCurrency(item) {
+  return item.latest?.currency || (item.store === 'aliexpress' ? 'USD' : 'SAR');
+}
+
 function renderEmpty() {
   return `<div class="empty">
     <div class="empty-icon">📦</div>
     <h2>No items yet</h2>
-    <p>Add products from Amazon Saudi Arabia to start tracking their prices.</p>
+    <p>Add products from Amazon Saudi Arabia or AliExpress to start tracking their prices.</p>
     <button class="btn btn-primary" data-action="open-add-item">+ Add Your First Item</button>
   </div>`;
 }
@@ -325,6 +334,7 @@ function renderEmpty() {
 function renderCard(item) {
   const p = item.latest;
   const currentPrice = p?.price ?? null;
+  const cur = itemCurrency(item);
   const diff = priceDiff(currentPrice, item.prevPrice);
   const inStock = p?.in_stock ?? true;
   const hasError = p?.error;
@@ -365,17 +375,17 @@ function renderCard(item) {
       ${imageHtml}
       <div class="card-img-placeholder" style="${placeholderStyle}">📦</div>
       <div class="card-meta">
-        <div class="card-store">Amazon SA</div>
+        <div class="card-store">${storeLabel(item)}</div>
         <div class="card-name">${escHtml(item.name)}</div>
       </div>
     </div>
 
     <div class="card-price-row">
       ${currentPrice != null
-        ? `<div class="card-price"><span class="card-currency">SAR</span>${fmtPrice(currentPrice)}</div>
+        ? `<div class="card-price"><span class="card-currency">${cur}</span>${fmtPrice(currentPrice)}</div>
            ${changeHtml}
            ${item.prevPrice && diff !== null && item.prevPrice !== currentPrice
-             ? `<span class="card-was">SAR ${fmtPrice(item.prevPrice)}</span>` : ''}`
+             ? `<span class="card-was">${cur} ${fmtPrice(item.prevPrice)}</span>` : ''}`
         : `<div style="color:var(--muted);font-size:14px">${hasError ? 'Check failed' : 'Not yet checked'}</div>`
       }
     </div>
@@ -387,11 +397,11 @@ function renderCard(item) {
     <div class="card-stats">
       <div class="stat-item">
         <div class="stat-label">Lowest ever</div>
-        <div class="stat-val low">${item.lowestPrice != null ? 'SAR ' + fmtPrice(item.lowestPrice) : '—'}</div>
+        <div class="stat-val low">${item.lowestPrice != null ? cur + ' ' + fmtPrice(item.lowestPrice) : '—'}</div>
       </div>
       <div class="stat-item">
         <div class="stat-label">Target price</div>
-        <div class="stat-val">${item.target_price != null ? 'SAR ' + fmtPrice(item.target_price) : '—'}</div>
+        <div class="stat-val">${item.target_price != null ? cur + ' ' + fmtPrice(item.target_price) : '—'}</div>
       </div>
     </div>
 
@@ -414,17 +424,17 @@ function openAddItemSheet() {
   openSheet('Add Item', `
     <div id="add-msg"></div>
     <div class="form-group">
-      <label>Amazon SA URL or ASIN *</label>
-      <input type="text" id="item-input" placeholder="https://www.amazon.sa/... or B0XXXXXX" autocomplete="off">
-      <div class="hint">Paste the product URL or paste the 10-character ASIN directly.</div>
+      <label>Product URL or ASIN *</label>
+      <input type="text" id="item-input" placeholder="amazon.sa URL / ASIN  or  aliexpress.com URL" autocomplete="off">
+      <div class="hint">Amazon SA: paste URL or 10-char ASIN. AliExpress: paste the product page URL.</div>
     </div>
     <div class="form-group">
       <label>Name (optional — auto-detected)</label>
-      <input type="text" id="item-name" placeholder="Leave blank to auto-detect from Amazon">
+      <input type="text" id="item-name" placeholder="Leave blank to auto-detect">
     </div>
     <div class="form-row">
       <div class="form-group">
-        <label>Target price (SAR)</label>
+        <label>Target price</label>
         <input type="number" id="item-target" placeholder="e.g. 250" min="0" step="0.01">
         <div class="hint">Notify when price drops to or below this.</div>
       </div>
@@ -492,18 +502,24 @@ async function openHistorySheet(itemId) {
 function renderHistorySheet(item, allHistory, validHistory) {
   const lowestPrice = validHistory.length ? Math.min(...validHistory.map(h => h.price)) : null;
 
+  const historyCur = validHistory[0]?.currency || (item.store === 'aliexpress' ? 'USD' : 'SAR');
+  const storeLink = item.store === 'aliexpress' ? 'View on AliExpress ↗' : 'View on Amazon ↗';
+  const itemIdLabel = item.store === 'aliexpress'
+    ? `Item ID: ${item.url.match(/\/item\/(\d+)/)?.[1] || '—'}`
+    : `ASIN: ${item.asin || '—'}`;
+
   document.getElementById('sheet-title').textContent = item.name;
   document.getElementById('sheet-body').innerHTML = `
     <div style="margin-bottom:8px;font-size:13px;color:var(--muted)">
-      ${validHistory.length} price records · ASIN: ${escHtml(item.asin || '—')}
-      · <a href="${escHtml(item.url)}" target="_blank" style="color:var(--accent)">View on Amazon ↗</a>
+      ${validHistory.length} price records · ${escHtml(itemIdLabel)}
+      · <a href="${escHtml(item.url)}" target="_blank" style="color:var(--accent)">${storeLink}</a>
     </div>
 
     <div class="chart-legend">
       <div class="chart-legend-item"><div class="chart-legend-dot" style="background:var(--accent)"></div> Amazon SA direct</div>
       <div class="chart-legend-item"><div class="chart-legend-dot" style="background:var(--amazon)"></div> Third-party seller</div>
-      ${lowestPrice != null ? `<div class="chart-legend-item"><div class="chart-legend-dot" style="background:var(--success)"></div> Lowest: SAR ${fmtPrice(lowestPrice)}</div>` : ''}
-      ${item.target_price != null ? `<div class="chart-legend-item"><div class="chart-legend-dot" style="background:var(--warning)"></div> Target: SAR ${fmtPrice(item.target_price)}</div>` : ''}
+      ${lowestPrice != null ? `<div class="chart-legend-item"><div class="chart-legend-dot" style="background:var(--success)"></div> Lowest: ${historyCur} ${fmtPrice(lowestPrice)}</div>` : ''}
+      ${item.target_price != null ? `<div class="chart-legend-item"><div class="chart-legend-dot" style="background:var(--warning)"></div> Target: ${historyCur} ${fmtPrice(item.target_price)}</div>` : ''}
     </div>
 
     <div class="chart-wrap"><canvas id="price-chart"></canvas></div>
@@ -513,8 +529,8 @@ function renderHistorySheet(item, allHistory, validHistory) {
         <thead>
           <tr>
             <th>Date</th>
-            <th>Price (SAR)</th>
-            <th>Was (SAR)</th>
+            <th>Price (${historyCur})</th>
+            <th>Was (${historyCur})</th>
             <th>Seller</th>
             <th>Stock</th>
           </tr>
@@ -552,7 +568,7 @@ function renderHistorySheet(item, allHistory, validHistory) {
   if (state.sheetChart) state.sheetChart.destroy();
 
   const datasets = [{
-    label: 'Price (SAR)',
+    label: `Price (${historyCur})`,
     data: prices,
     borderColor: '#3b82f6',
     backgroundColor: '#3b82f611',
@@ -568,14 +584,14 @@ function renderHistorySheet(item, allHistory, validHistory) {
     annotations.lowest = {
       type: 'line', yMin: lowestPrice, yMax: lowestPrice,
       borderColor: '#22c55e', borderWidth: 1.5, borderDash: [6, 3],
-      label: { content: `Low SAR ${fmtPrice(lowestPrice)}`, display: true, backgroundColor: '#22c55e33', color: '#22c55e', font: { size: 11 } },
+      label: { content: `Low ${historyCur} ${fmtPrice(lowestPrice)}`, display: true, backgroundColor: '#22c55e33', color: '#22c55e', font: { size: 11 } },
     };
   }
   if (item.target_price != null) {
     annotations.target = {
       type: 'line', yMin: item.target_price, yMax: item.target_price,
       borderColor: '#f59e0b', borderWidth: 1.5, borderDash: [6, 3],
-      label: { content: `Target SAR ${fmtPrice(item.target_price)}`, display: true, backgroundColor: '#f59e0b33', color: '#f59e0b', font: { size: 11 } },
+      label: { content: `Target ${historyCur} ${fmtPrice(item.target_price)}`, display: true, backgroundColor: '#f59e0b33', color: '#f59e0b', font: { size: 11 } },
     };
   }
 
@@ -594,7 +610,7 @@ function renderHistorySheet(item, allHistory, validHistory) {
             label: (ctx) => {
               const h = validHistory[ctx.dataIndex];
               const seller = h.is_amazon_direct ? 'Amazon SA' : (h.seller_name || 'Seller');
-              return [`SAR ${fmtPrice(ctx.raw)}`, `Seller: ${seller}`, h.is_prime ? 'Prime ⚡' : ''];
+              return [`${historyCur} ${fmtPrice(ctx.raw)}`, `Seller: ${seller}`, h.is_prime ? 'Prime ⚡' : ''];
             },
           },
           backgroundColor: '#1e293b',
@@ -613,7 +629,7 @@ function renderHistorySheet(item, allHistory, validHistory) {
           grid: { color: '#334155' },
           ticks: {
             color: '#94a3b8',
-            callback: v => 'SAR ' + fmtPrice(v),
+            callback: v => historyCur + ' ' + fmtPrice(v),
           },
         },
       },
@@ -761,8 +777,8 @@ document.addEventListener('click', async e => {
     const btn = document.getElementById('save-add-btn');
     if (!input) { setMsg('add-msg', 'Please enter a URL or ASIN.'); return; }
     btn.disabled = true;
-    btn.innerHTML = '<span class="spinner"></span> Fetching from Amazon…';
-    setMsg('add-msg', 'Scraping Amazon SA for current price and product info…', 'info');
+    btn.innerHTML = '<span class="spinner"></span> Fetching product…';
+    setMsg('add-msg', 'Scraping product page for current price and product info…', 'info');
     try {
       await api('POST', '/api/items', { input, name: name || undefined, target_price: target || undefined, notify_drop_percent: dropPct });
       closeSheet();
