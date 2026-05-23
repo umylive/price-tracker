@@ -1,5 +1,6 @@
 const axios = require('axios');
 const cheerio = require('cheerio');
+const crypto = require('crypto');
 
 const USER_AGENTS = [
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
@@ -407,6 +408,65 @@ function findPriceInData(obj, depth = 0) {
   return null;
 }
 
+// ── AliExpress Affiliate API ──────────────────────────────────────────────────
+// Signature: MD5( appSecret + sortedKey1Val1Key2Val2... + appSecret ), uppercase
+function signAliRequest(params, appSecret) {
+  let str = appSecret;
+  for (const key of Object.keys(params).sort()) str += key + String(params[key]);
+  str += appSecret;
+  return crypto.createHash('md5').update(str, 'utf8').digest('hex').toUpperCase();
+}
+
+async function scrapeAliExpressAPI(productUrl, appKey, appSecret) {
+  const timestamp = new Date().toISOString().replace('T', ' ').slice(0, 19);
+  const params = {
+    method: 'aliexpress.affiliate.productdetail.get',
+    app_key: appKey,
+    timestamp,
+    sign_method: 'md5',
+    v: '2.0',
+    product_urls: productUrl,
+    target_currency: 'SAR',
+    target_language: 'EN',
+    fields: 'product_id,product_title,sale_price,original_price,sale_price_currency,product_main_image_url,shop_name',
+  };
+  params.sign = signAliRequest(params, appSecret);
+
+  const { data } = await axios.post(
+    'https://api-sg.aliexpress.com/sync',
+    new URLSearchParams(params).toString(),
+    {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=utf-8' },
+      timeout: 15000,
+    }
+  );
+
+  const resp = data?.aliexpress_affiliate_productdetail_get_response?.resp_result;
+  if (!resp) throw new Error('Unexpected affiliate API response structure');
+  if (resp.resp_code !== 200) throw new Error(`Affiliate API ${resp.resp_code}: ${resp.resp_msg}`);
+
+  const products = resp.result?.products?.product;
+  if (!Array.isArray(products) || products.length === 0) {
+    throw new Error('Product not found in AliExpress affiliate catalog');
+  }
+
+  const p = products[0];
+  const price = parseFloat(p.sale_price);
+  const origPrice = parseFloat(p.original_price);
+
+  return {
+    title: p.product_title || null,
+    price: isNaN(price) ? null : price,
+    originalPrice: (!isNaN(origPrice) && origPrice > price) ? origPrice : null,
+    currency: p.sale_price_currency || 'SAR',
+    sellerName: p.shop_name || null,
+    isAmazonDirect: false,
+    isPrime: false,
+    inStock: !isNaN(price) && price > 0,
+    imageUrl: p.product_main_image_url || null,
+  };
+}
+
 async function tryFetchAli(url, cookies, lang = 'en-US,en;q=0.9') {
   const { data, status } = await axios.get(url, {
     headers: {
@@ -495,8 +555,23 @@ function parseAliHtml(html) {
   return null;
 }
 
-async function scrapeAliExpress(url) {
-  // Warm up session cookies to reduce bot-detection false positives
+async function scrapeAliExpress(url, appKey, appSecret) {
+  // 1. Try affiliate API first — reliable, no bot risk
+  const key = appKey || process.env.ALIEXPRESS_APP_KEY;
+  const secret = appSecret || process.env.ALIEXPRESS_APP_SECRET;
+  if (key && secret) {
+    try {
+      const result = await scrapeAliExpressAPI(url, key, secret);
+      if (result?.title && result?.price != null) {
+        console.log(`[aliexpress] affiliate API OK: ${result.currency} ${result.price}`);
+        return result;
+      }
+    } catch (err) {
+      console.error(`[aliexpress] affiliate API error, falling back to HTML: ${err.message}`);
+    }
+  }
+
+  // 2. Fall back to HTML scraping — warm up session cookies first
   const cookies = await fetchAliCookies();
 
   // Try: English www → Arabic ar (which shows SAR prices and may have different SSR)
@@ -525,4 +600,4 @@ async function scrapeAliExpress(url) {
   throw lastError || new Error('AliExpress scraping failed');
 }
 
-module.exports = { scrapeAmazonSA, scrapeAliExpress, normalizeUrl, extractASIN };
+module.exports = { scrapeAmazonSA, scrapeAliExpress, scrapeAliExpressAPI, normalizeUrl, extractASIN };

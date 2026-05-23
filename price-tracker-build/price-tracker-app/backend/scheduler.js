@@ -30,7 +30,14 @@ async function checkItem(item) {
   console.log(`[check] ${item.name}`);
   let scraped;
   try {
-    scraped = item.store === 'aliexpress' ? await scrapeAliExpress(item.url) : await scrapeAmazonSA(item.url);
+    if (item.store === 'aliexpress') {
+      const getSetting = k => db.prepare('SELECT value FROM settings WHERE key = ?').get(k)?.value || '';
+      const appKey = process.env.ALIEXPRESS_APP_KEY || getSetting('aliexpress_app_key');
+      const appSecret = process.env.ALIEXPRESS_APP_SECRET || getSetting('aliexpress_app_secret');
+      scraped = await scrapeAliExpress(item.url, appKey, appSecret);
+    } else {
+      scraped = await scrapeAmazonSA(item.url);
+    }
   } catch (err) {
     db.prepare("INSERT INTO price_history (item_id, error, in_stock) VALUES (?, ?, 0)").run(item.id, err.message);
     db.prepare("UPDATE items SET last_checked_at = datetime('now') WHERE id = ?").run(item.id);

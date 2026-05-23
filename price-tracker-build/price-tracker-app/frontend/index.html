@@ -752,6 +752,27 @@ async function openSettingsSheet() {
       </div>
 
       <div class="settings-section">
+        <h3>AliExpress Affiliate API</h3>
+        ${settings.aliexpress_via_env ? `
+        <div class="form-group">
+          <div style="display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--surface2);border-radius:8px;font-size:13px;color:var(--text)">
+            <span style="font-size:16px">🔑</span>
+            <span>App Key &amp; Secret set via environment variables — cannot be changed here.</span>
+          </div>
+        </div>` : `
+        <div class="form-group">
+          <label>App Key</label>
+          <input type="text" id="s-ali-app-key" value="${escHtml(settings.aliexpress_app_key || '')}" placeholder="e.g. 12345678" autocomplete="off">
+          <div class="hint">From your AliExpress Open Platform app (Portals).</div>
+        </div>
+        <div class="form-group">
+          <label>App Secret</label>
+          <input type="password" id="s-ali-app-secret" placeholder="${settings.aliexpress_app_secret ? '(saved — enter to change)' : 'Enter App Secret'}" autocomplete="off">
+        </div>`}
+        <div class="hint" style="margin-top:4px">Enables reliable price fetching via the affiliate API instead of HTML scraping. Prices returned in SAR.</div>
+      </div>
+
+      <div class="settings-section">
         <h3>Account</h3>
         <p style="font-size:13px;color:var(--muted)">Logged in as <strong style="color:var(--text)">${escHtml(state.user?.username || '')}</strong></p>
         <button class="btn btn-danger btn-sm" data-action="logout" style="margin-top:8px">Sign Out</button>
@@ -923,9 +944,13 @@ document.addEventListener('click', async e => {
     const interval = document.getElementById('s-interval')?.value;
     const notifyDrop = document.getElementById('s-notify-drop')?.checked ? '1' : '0';
     const notifyStock = document.getElementById('s-notify-stock')?.checked ? '1' : '0';
+    const aliAppKey = document.getElementById('s-ali-app-key')?.value.trim();
+    const aliAppSecret = document.getElementById('s-ali-app-secret')?.value.trim();
     const payload = { check_interval: interval, notify_price_drop: notifyDrop, notify_back_in_stock: notifyStock };
     if (chatId) payload.telegram_chat_id = chatId;
     if (botToken) payload.telegram_bot_token = botToken;
+    if (aliAppKey) payload.aliexpress_app_key = aliAppKey;
+    if (aliAppSecret) payload.aliexpress_app_secret = aliAppSecret;
     const btn = el;
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner"></span>';
