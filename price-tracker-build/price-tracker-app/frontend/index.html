@@ -692,21 +692,22 @@ async function openSettingsSheet() {
         <h3>Telegram Notifications</h3>
         ${settings.telegram_via_env ? `
         <div class="form-group">
+          <label>Bot Token</label>
           <div style="display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--surface2);border-radius:8px;font-size:13px;color:var(--text2)">
             <span style="font-size:16px">🔑</span>
-            <span>Bot token and chat ID are set via environment variables and cannot be changed here.</span>
+            <span>Set via environment variable — cannot be changed here.</span>
           </div>
         </div>` : `
         <div class="form-group">
           <label>Bot Token</label>
           <input type="password" id="s-bot-token" placeholder="${settings.telegram_bot_token ? '(saved — enter to change)' : 'Enter from @BotFather'}" autocomplete="off">
           <div class="hint">Create a bot via @BotFather on Telegram. Paste the token here.</div>
-        </div>
+        </div>`}
         <div class="form-group">
           <label>Your Chat ID</label>
           <input type="text" id="s-chat-id" value="${escHtml(settings.telegram_chat_id || '')}" placeholder="e.g. 123456789">
           <div class="hint">Message @userinfobot on Telegram to get your Chat ID.</div>
-        </div>`}
+        </div>
         <div class="form-group" style="margin-bottom:8px">
           <label class="form-toggle">
             <input type="checkbox" id="s-notify-drop" ${settings.notify_price_drop === '1' ? 'checked' : ''}>
