@@ -513,7 +513,46 @@ async function scrapeAliExpressAPI(productUrl, appKey, appSecret) {
     }
   }
 
-  throw new Error('Product not found in AliExpress affiliate catalog');
+  // Method 3: solution.product.info.get — works by product_id, not restricted to affiliate catalog
+  if (itemId) {
+    try {
+      const data = await aliApiCall({
+        method: 'aliexpress.solution.product.info.get',
+        product_id: itemId,
+      }, appKey, appSecret);
+
+      if (data?.error_response) throw new Error(data.error_response.msg || JSON.stringify(data.error_response));
+
+      const r = data?.result;
+      if (data?.code === '0' && r) {
+        const title = r.subject || null;
+        if (title) {
+          const currency = r.currency_code || 'USD';
+          let price = null;
+
+          const skus = r.aeop_ae_product_s_k_us;
+          if (Array.isArray(skus) && skus.length > 0) {
+            const prices = skus
+              .map(s => parseFloat(s.sku_discount_price || s.sku_price))
+              .filter(n => !isNaN(n) && n > 0);
+            if (prices.length > 0) price = Math.min(...prices);
+          }
+          if (price == null) price = parseFloat(r.product_price) || null;
+
+          const inStock = r.product_status_type === 'onSelling';
+          const imageUrl = r.image_u_r_ls?.split(';')[0] || null;
+
+          console.log('[aliexpress] solution.product.info.get OK');
+          return { title, price, originalPrice: null, currency, sellerName: null, isAmazonDirect: false, isPrime: false, inStock, imageUrl };
+        }
+      }
+      console.log('[aliexpress] solution.product.info.get returned no data:', JSON.stringify(data).slice(0, 200));
+    } catch (e) {
+      console.error('[aliexpress] solution.product.info.get error:', e.message);
+    }
+  }
+
+  throw new Error('Product not found via AliExpress API');
 }
 
 async function tryFetchAli(url, cookies, lang = 'en-US,en;q=0.9') {
