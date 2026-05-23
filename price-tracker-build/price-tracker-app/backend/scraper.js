@@ -417,50 +417,9 @@ function signAliRequest(params, appSecret) {
   return crypto.createHash('md5').update(str, 'utf8').digest('hex').toUpperCase();
 }
 
-async function scrapeAliExpressAPI(productUrl, appKey, appSecret) {
-  const timestamp = new Date().toISOString().replace('T', ' ').slice(0, 19);
-  const params = {
-    method: 'aliexpress.affiliate.productdetail.get',
-    app_key: appKey,
-    timestamp,
-    sign_method: 'md5',
-    v: '2.0',
-    product_urls: productUrl,
-    target_currency: 'SAR',
-    target_language: 'EN',
-    fields: 'product_id,product_title,sale_price,original_price,sale_price_currency,product_main_image_url,shop_name',
-  };
-  params.sign = signAliRequest(params, appSecret);
-
-  const { data } = await axios.post(
-    'https://api-sg.aliexpress.com/sync',
-    new URLSearchParams(params).toString(),
-    {
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=utf-8' },
-      timeout: 15000,
-    }
-  );
-
-  console.log('[aliexpress] API raw response:', JSON.stringify(data).slice(0, 800));
-
-  if (data?.error_response) {
-    throw new Error(`Affiliate API error: ${data.error_response.msg || JSON.stringify(data.error_response)}`);
-  }
-
-  let resp = data?.aliexpress_affiliate_productdetail_get_response?.resp_result;
-  if (!resp) throw new Error(`Unexpected affiliate API response structure: ${JSON.stringify(data).slice(0, 200)}`);
-  if (typeof resp === 'string') { try { resp = JSON.parse(resp); } catch (_) {} }
-  if (String(resp.resp_code) !== '200') throw new Error(`Affiliate API ${resp.resp_code}: ${resp.resp_msg}`);
-
-  const products = resp.result?.products?.product;
-  if (!Array.isArray(products) || products.length === 0) {
-    throw new Error('Product not found in AliExpress affiliate catalog');
-  }
-
-  const p = products[0];
+function parseAliApiProduct(p) {
   const price = parseFloat(p.sale_price);
   const origPrice = parseFloat(p.original_price);
-
   return {
     title: p.product_title || null,
     price: isNaN(price) ? null : price,
@@ -472,6 +431,89 @@ async function scrapeAliExpressAPI(productUrl, appKey, appSecret) {
     inStock: !isNaN(price) && price > 0,
     imageUrl: p.product_main_image_url || null,
   };
+}
+
+async function aliApiCall(params, appKey, appSecret) {
+  params.app_key = appKey;
+  params.timestamp = new Date().toISOString().replace('T', ' ').slice(0, 19);
+  params.sign_method = 'md5';
+  params.v = '2.0';
+  params.sign = signAliRequest(params, appSecret);
+
+  const { data } = await axios.post(
+    'https://api-sg.aliexpress.com/sync',
+    new URLSearchParams(params).toString(),
+    { headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=utf-8' }, timeout: 15000 }
+  );
+  console.log(`[aliexpress] ${params.method} response:`, JSON.stringify(data).slice(0, 600));
+  return data;
+}
+
+async function scrapeAliExpressAPI(productUrl, appKey, appSecret) {
+  const itemId = productUrl.match(/\/item\/(\d+)/)?.[1];
+
+  // Method 1: productdetail.get (works only for affiliate-enrolled products)
+  try {
+    const data = await aliApiCall({
+      method: 'aliexpress.affiliate.productdetail.get',
+      product_urls: productUrl,
+      target_currency: 'SAR',
+      target_language: 'EN',
+      fields: 'product_id,product_title,sale_price,original_price,sale_price_currency,product_main_image_url,shop_name',
+    }, appKey, appSecret);
+
+    if (data?.error_response) throw new Error(data.error_response.msg || JSON.stringify(data.error_response));
+
+    let resp = data?.aliexpress_affiliate_productdetail_get_response?.resp_result;
+    if (resp) {
+      if (typeof resp === 'string') { try { resp = JSON.parse(resp); } catch (_) {} }
+      if (String(resp.resp_code) === '200') {
+        const products = resp.result?.products?.product;
+        if (Array.isArray(products) && products.length > 0) {
+          console.log('[aliexpress] affiliate API productdetail.get OK');
+          return parseAliApiProduct(products[0]);
+        }
+      }
+    }
+    console.log('[aliexpress] productdetail.get returned no products (not in affiliate catalog) — trying product.query');
+  } catch (e) {
+    console.error('[aliexpress] productdetail.get error:', e.message);
+  }
+
+  // Method 2: product.query — search affiliate catalog by product ID keyword
+  if (itemId) {
+    try {
+      const data = await aliApiCall({
+        method: 'aliexpress.affiliate.product.query',
+        keywords: itemId,
+        target_currency: 'SAR',
+        target_language: 'EN',
+        page_no: '1',
+        page_size: '5',
+        fields: 'product_id,product_title,sale_price,original_price,sale_price_currency,product_main_image_url,shop_name,product_detail_url',
+      }, appKey, appSecret);
+
+      if (data?.error_response) throw new Error(data.error_response.msg || JSON.stringify(data.error_response));
+
+      let resp = data?.aliexpress_affiliate_product_query_response?.resp_result;
+      if (resp) {
+        if (typeof resp === 'string') { try { resp = JSON.parse(resp); } catch (_) {} }
+        if (String(resp.resp_code) === '200') {
+          const products = resp.result?.products?.product;
+          if (Array.isArray(products) && products.length > 0) {
+            const match = products.find(p => p.product_detail_url?.includes(itemId)) || products[0];
+            console.log('[aliexpress] affiliate API product.query OK');
+            return parseAliApiProduct(match);
+          }
+        }
+      }
+      console.log('[aliexpress] product.query returned no results — product not in affiliate catalog');
+    } catch (e) {
+      console.error('[aliexpress] product.query error:', e.message);
+    }
+  }
+
+  throw new Error('Product not found in AliExpress affiliate catalog');
 }
 
 async function tryFetchAli(url, cookies, lang = 'en-US,en;q=0.9') {
