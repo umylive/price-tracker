@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code when working with code in this repository.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Project Overview
 
@@ -32,7 +32,7 @@ Deployed to Unraid by pulling from GHCR:
 ```
 ghcr.io/umylive/price-tracker:latest
 ```
-Every push to `main` touching `price-tracker-build/**` triggers `.github/workflows/docker-build.yml`, which builds and pushes `linux/amd64`. Also manually triggerable via `workflow_dispatch`.
+Every push to `main` touching `price-tracker-build/**` or `.github/workflows/docker-build.yml` triggers the workflow, which builds `linux/amd64` and pushes three tags (`latest`, short SHA, timestamp) via `docker/metadata-action`. Layer caching (`type=gha`) is enabled. Also manually triggerable via `workflow_dispatch` — use this if the build doesn't fire on the first push to a new repo (a known GitHub quirk).
 
 ## Architecture
 
