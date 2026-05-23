@@ -234,13 +234,21 @@ function tryParseRunParams(html) {
   try {
     const rp = JSON.parse(html.substring(startBrace, i + 1));
     const d = rp.data || rp;
-    const pm = d.priceModule || {};
+    const pm = d.priceModule || d.webItemDetail?.priceModule || {};
 
     let price = pm.minActivityAmount?.value ?? pm.minAmount?.value ?? null;
     if (price == null && pm.formatedActivityPrice) price = parsePrice(pm.formatedActivityPrice);
     if (price == null && pm.formatedPrice) price = parsePrice(pm.formatedPrice);
+    if (price == null && pm.activityAmount?.value != null) price = parseFloat(pm.activityAmount.value);
 
-    const currency = pm.minActivityAmount?.currency ?? pm.minAmount?.currency ?? 'USD';
+    // skuModule fallback (newer runParams structure)
+    if (price == null && d.skuModule?.skuPriceList?.length) {
+      const sp = d.skuModule.skuPriceList[0].skuVal;
+      price = sp?.skuActivityAmount?.value ?? sp?.skuAmount?.value ?? null;
+      if (price != null) price = parseFloat(price);
+    }
+
+    const currency = pm.minActivityAmount?.currency ?? pm.minAmount?.currency ?? pm.activityAmount?.currency ?? 'USD';
 
     let originalPrice = pm.maxAmount?.value != null ? parseFloat(pm.maxAmount.value) : null;
     if (originalPrice != null && originalPrice === parseFloat(price)) originalPrice = null;
@@ -283,19 +291,51 @@ function parseAliExpressHtml(html, $) {
     if (mp) price = parseFloat(mp) || null;
   }
 
-  // Fallback: regex patterns from embedded JS
+  // Fallback: regex patterns from embedded JS (ordered most-to-least reliable)
   if (price == null) {
     for (const pat of [
       /"formatedActivityPrice"\s*:\s*"([^"]+)"/,
       /"formatedPrice"\s*:\s*"([^"]+)"/,
       /"activityAmount"\s*:[^}]*"formatedAmount"\s*:\s*"([^"]+)"/,
       /"minAmount"\s*:[^}]*"formatedAmount"\s*:\s*"([^"]+)"/,
+      /"skuAmount"\s*:[^}]*"formatedAmount"\s*:\s*"([^"]+)"/,
+      /"tradeAmount"\s*:[^}]*"formatedAmount"\s*:\s*"([^"]+)"/,
       /"salePrice"\s*:\s*"([^"]+)"/,
       /"minPrice"\s*:\s*"([^"]+)"/,
+      /"promotionPrice"\s*:\s*"([\d.,]+)"/,
+      /"discountedPrice"\s*:\s*"([\d.,]+)"/,
+      /"currentPrice"\s*:\s*"([\d.,]+)"/,
+      /"finalPrice"\s*:\s*"?([\d.,]+)"?/,
+      /"displayPrice"\s*:\s*"([^"]+)"/,
+      /"price"\s*:\s*"((?:SAR|USD|EUR)\s*\+?[\d.,]+)"/,
     ]) {
       const m = html.match(pat);
       if (m) { const p = parsePrice(m[1]); if (p != null) { price = p; break; } }
     }
+  }
+
+  // Fallback: __NEXT_DATA__ (Next.js embed — newer AliExpress pages)
+  if (price == null) {
+    try {
+      const ndMatch = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
+      if (ndMatch) {
+        const nd = JSON.parse(ndMatch[1]);
+        const walk = (obj, depth = 0) => {
+          if (depth > 10 || !obj || typeof obj !== 'object') return null;
+          for (const key of ['salePrice', 'promotionPrice', 'price', 'discountPrice', 'activityPrice', 'currentPrice']) {
+            if (typeof obj[key] === 'number') return obj[key];
+            if (typeof obj[key] === 'string') { const p = parsePrice(obj[key]); if (p != null) return p; }
+          }
+          for (const v of Object.values(obj)) {
+            const found = walk(v, depth + 1);
+            if (found != null) return found;
+          }
+          return null;
+        };
+        const p = walk(nd);
+        if (p != null) price = p;
+      }
+    } catch (_) {}
   }
 
   let originalPrice = null;
@@ -332,13 +372,15 @@ async function scrapeAliExpress(url) {
         headers: {
           'User-Agent': getRandomUA(),
           'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-          'Accept-Language': 'en-US,en;q=0.9',
+          'Accept-Language': 'en-US,en;q=0.9,ar;q=0.8',
           'Accept-Encoding': 'gzip, deflate, br',
           'Connection': 'keep-alive',
           'Cache-Control': 'no-cache',
+          'Referer': 'https://www.aliexpress.com/',
           'Sec-Fetch-Dest': 'document',
           'Sec-Fetch-Mode': 'navigate',
-          'Sec-Fetch-Site': 'none',
+          'Sec-Fetch-Site': 'same-origin',
+          'Upgrade-Insecure-Requests': '1',
         },
         timeout: 25000,
         maxRedirects: 5,

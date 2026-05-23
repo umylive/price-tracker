@@ -223,7 +223,9 @@ async function api(method, path, body) {
 // ── Utilities ──────────────────────────────────────────────────────────────────
 function relativeTime(iso) {
   if (!iso) return 'Never';
-  const diff = Date.now() - new Date(iso).getTime();
+  // SQLite datetime('now') returns UTC without 'Z'; add it so JS parses as UTC not local time
+  const ts = iso.includes('T') ? iso : iso.replace(' ', 'T') + 'Z';
+  const diff = Date.now() - new Date(ts).getTime();
   const m = Math.floor(diff / 60000);
   if (m < 1) return 'Just now';
   if (m < 60) return `${m}m ago`;
