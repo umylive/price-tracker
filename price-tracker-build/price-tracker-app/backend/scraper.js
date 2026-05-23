@@ -440,6 +440,39 @@ async function scrapeAliExpressApi(itemId, appKey, appSecret, trackingId) {
   };
 }
 
+async function warmupAliExpressSession(ua) {
+  const staticCookies = 'aep_usuc_f=site=glo&c_tp=USD&region=US&b_locale=en_US; intl_locale=en_US';
+  try {
+    const resp = await axios.get('https://www.aliexpress.com/', {
+      headers: {
+        'User-Agent': ua,
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'none',
+        'Cookie': staticCookies,
+      },
+      timeout: 15000,
+      maxRedirects: 5,
+    });
+    const setCookies = resp.headers['set-cookie'] || [];
+    // Extract name=value pairs from each Set-Cookie header (drop Path, Domain, etc.)
+    const pairs = setCookies.map(c => c.split(';')[0]).filter(Boolean);
+    // Append our locale overrides so they take priority
+    pairs.push('aep_usuc_f=site=glo&c_tp=USD&region=US&b_locale=en_US');
+    pairs.push('intl_locale=en_US');
+    console.log(`[aliexpress] session warm-up OK, got ${setCookies.length} cookies from homepage`);
+    return pairs.join('; ');
+  } catch (e) {
+    console.warn(`[aliexpress] session warm-up failed (${e.message}), using static cookies`);
+    return staticCookies;
+  }
+}
+
 async function scrapeAliExpress(url, options = {}) {
   const itemId = extractAliExpressItemId(url);
   const { appKey, appSecret, trackingId } = options;
@@ -455,13 +488,18 @@ async function scrapeAliExpress(url, options = {}) {
     }
   }
 
+  // Warm up a session on the homepage before hitting the product page
+  const ua = getRandomUA();
+  const sessionCookie = await warmupAliExpressSession(ua);
+  // Brief pause to mimic natural navigation
+  await new Promise(r => setTimeout(r, 1500));
+
   for (let attempt = 0; attempt < 3; attempt++) {
     if (attempt > 0) await new Promise(r => setTimeout(r, 2000 * attempt));
     try {
-      // Cookie locks AliExpress to global English site and prevents redirect to ar.aliexpress.com
       const { data, status } = await axios.get(url, {
         headers: {
-          'User-Agent': getRandomUA(),
+          'User-Agent': ua,
           'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
           'Accept-Language': 'en-US,en;q=0.9',
           'Accept-Encoding': 'gzip, deflate, br',
@@ -472,7 +510,7 @@ async function scrapeAliExpress(url, options = {}) {
           'Sec-Fetch-Mode': 'navigate',
           'Sec-Fetch-Site': 'same-origin',
           'Upgrade-Insecure-Requests': '1',
-          'Cookie': 'aep_usuc_f=site=glo&c_tp=USD&region=US&b_locale=en_US; intl_locale=en_US',
+          'Cookie': sessionCookie,
         },
         timeout: 25000,
         maxRedirects: 5,
