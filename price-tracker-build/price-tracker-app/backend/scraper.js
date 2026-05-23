@@ -332,22 +332,30 @@ function parseAliMeta($, html) {
   };
 }
 
-async function scrapeAliExpress(url, zenrowsApiKey) {
-  const key = zenrowsApiKey || process.env.ZENROWS_API_KEY;
-  if (!key) throw new Error('Zenrows API key is not configured — add it in Settings');
-
-  console.log(`[aliexpress] fetching via Zenrows: ${url}`);
+async function scrapeAliExpress(url) {
+  console.log(`[aliexpress] fetching: ${url}`);
   let lastError;
   for (let attempt = 0; attempt < 3; attempt++) {
     if (attempt > 0) await new Promise(r => setTimeout(r, 3000 * attempt));
     try {
-      const { data: html, status } = await axios.get('https://api.zenrows.com/v1/', {
-        params: { apikey: key, url, js_render: 'true', wait: '2000' },
-        timeout: 60000,
+      const { data: html, status } = await axios.get(url, {
+        headers: {
+          'User-Agent': getRandomUA(),
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.9',
+          'Accept-Encoding': 'gzip, deflate, br',
+          'Connection': 'keep-alive',
+          'Upgrade-Insecure-Requests': '1',
+          'Sec-Fetch-Dest': 'document',
+          'Sec-Fetch-Mode': 'navigate',
+          'Sec-Fetch-Site': 'none',
+          'Cache-Control': 'max-age=0',
+        },
+        timeout: 30000,
         maxRedirects: 5,
       });
 
-      if (status !== 200) throw new Error(`Zenrows returned HTTP ${status}`);
+      if (status !== 200) throw new Error(`HTTP ${status}`);
 
       const $ = cheerio.load(html);
 
@@ -375,7 +383,7 @@ async function scrapeAliExpress(url, zenrowsApiKey) {
       console.error(`[aliexpress] attempt ${attempt + 1} failed: ${err.message}`);
     }
   }
-  throw lastError || new Error('AliExpress scraping via Zenrows failed');
+  throw lastError || new Error('AliExpress scraping failed');
 }
 
 module.exports = { scrapeAmazonSA, scrapeAliExpress, normalizeUrl, extractASIN };

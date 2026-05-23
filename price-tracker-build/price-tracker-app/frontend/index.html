@@ -735,23 +735,6 @@ async function openSettingsSheet() {
       </div>
 
       <div class="settings-section">
-        <h3>Zenrows (AliExpress Scraping)</h3>
-        ${settings.zenrows_via_env ? `
-        <div class="form-group">
-          <label>API Key</label>
-          <div style="display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--surface2);border-radius:8px;font-size:13px;color:var(--text2)">
-            <span style="font-size:16px">🔑</span>
-            <span>Set via environment variable — cannot be changed here.</span>
-          </div>
-        </div>` : `
-        <div class="form-group">
-          <label>API Key</label>
-          <input type="password" id="s-zenrows-key" placeholder="${settings.zenrows_api_key ? '(saved — enter to change)' : 'Enter Zenrows API key'}" autocomplete="off">
-          <div class="hint">Required to track AliExpress prices. Get your key at zenrows.com.</div>
-        </div>`}
-      </div>
-
-      <div class="settings-section">
         <h3>Check Intervals</h3>
         <div class="form-group">
           <label>Amazon SA — how often to check</label>
@@ -951,13 +934,11 @@ document.addEventListener('click', async e => {
     const chatId = document.getElementById('s-chat-id')?.value.trim();
     const interval = document.getElementById('s-interval')?.value;
     const aliInterval = document.getElementById('s-ali-interval')?.value;
-    const zenrowsKey = document.getElementById('s-zenrows-key')?.value.trim();
     const notifyDrop = document.getElementById('s-notify-drop')?.checked ? '1' : '0';
     const notifyStock = document.getElementById('s-notify-stock')?.checked ? '1' : '0';
     const payload = { check_interval: interval, aliexpress_check_interval: aliInterval, notify_price_drop: notifyDrop, notify_back_in_stock: notifyStock };
     if (chatId) payload.telegram_chat_id = chatId;
     if (botToken) payload.telegram_bot_token = botToken;
-    if (zenrowsKey) payload.zenrows_api_key = zenrowsKey;
     const btn = el;
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner"></span>';

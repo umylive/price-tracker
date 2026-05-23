@@ -35,8 +35,7 @@ async function checkItem(item) {
   let scraped;
   try {
     if (item.store === 'aliexpress') {
-      const zenrowsKey = process.env.ZENROWS_API_KEY || settings.zenrows_api_key;
-      scraped = await scrapeAliExpress(item.url, zenrowsKey);
+      scraped = await scrapeAliExpress(item.url);
     } else {
       scraped = await scrapeAmazonSA(item.url);
     }

@@ -118,12 +118,7 @@ app.post('/api/items', requireAuth, async (req, res) => {
   let imageUrl = null;
   let scraped = null;
   try {
-    if (store === 'aliexpress') {
-      const zenrowsKey = process.env.ZENROWS_API_KEY || getSetting('zenrows_api_key');
-      scraped = await scrapeAliExpress(url, zenrowsKey);
-    } else {
-      scraped = await scrapeAmazonSA(url);
-    }
+    scraped = store === 'aliexpress' ? await scrapeAliExpress(url) : await scrapeAmazonSA(url);
     if (!finalName && scraped.title) finalName = scraped.title;
     imageUrl = scraped.imageUrl || null;
   } catch (e) {
@@ -214,21 +209,19 @@ app.get('/api/settings', requireAuth, (req, res) => {
   const rows = db.prepare('SELECT key, value FROM settings').all();
   const settings = {};
   rows.forEach(r => {
-    if ((r.key === 'telegram_bot_token' || r.key === 'zenrows_api_key') && r.value && r.value.length > 8) {
+    if (r.key === 'telegram_bot_token' && r.value && r.value.length > 8) {
       settings[r.key] = r.value.slice(0, 4) + '...' + r.value.slice(-4);
     } else {
       settings[r.key] = r.value;
     }
   });
   settings.telegram_via_env = !!process.env.TELEGRAM_BOT_TOKEN;
-  settings.zenrows_via_env = !!process.env.ZENROWS_API_KEY;
   res.json(settings);
 });
 
 app.put('/api/settings', requireAuth, (req, res) => {
-  const allowed = ['telegram_bot_token', 'telegram_chat_id', 'check_interval', 'aliexpress_check_interval', 'notify_price_drop', 'notify_back_in_stock', 'zenrows_api_key']
-    .filter(k => !(k === 'telegram_bot_token' && process.env.TELEGRAM_BOT_TOKEN))
-    .filter(k => !(k === 'zenrows_api_key' && process.env.ZENROWS_API_KEY));
+  const allowed = ['telegram_bot_token', 'telegram_chat_id', 'check_interval', 'aliexpress_check_interval', 'notify_price_drop', 'notify_back_in_stock']
+    .filter(k => !(k === 'telegram_bot_token' && process.env.TELEGRAM_BOT_TOKEN));
   const update = db.prepare('UPDATE settings SET value = ? WHERE key = ?');
   const batch = db.transaction(updates => {
     for (const [key, value] of updates) {
