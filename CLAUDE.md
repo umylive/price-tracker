@@ -61,19 +61,19 @@ price-tracker-build/price-tracker-app/
 **Scraper** (`scraper.js`): Two scrapers — `scrapeAmazonSA` and `scrapeAliExpress` — both use `axios` with rotating user agents and browser-like headers, retry 3× with backoff, and return `{ title, price, originalPrice, currency, sellerName, isAmazonDirect, isPrime, inStock, imageUrl }`.
 
 - **Amazon SA**: tries JSON-LD structured data first, falls back to CSS selector parsing. Uses the English URL prefix (`/-/en/dp/ASIN`) for consistent content and Western numerals. CAPTCHA detection breaks the retry loop immediately.
-- **AliExpress**: tries `window.runParams` JSON (stack-based brace extraction), then JSON-LD, then `parseAliExpressHtml` which tries Facebook product meta tags, microdata, a prioritised list of regex patterns over embedded JS, `__NEXT_DATA__` (Next.js), and finally a raw currency-string scan (`SAR/USD/EUR N.NN`) as a last resort. For products with colour/size variants, prices are in `skuModule.skuPriceList` — the scraper iterates all SKUs and takes the minimum sale price.
+- **AliExpress**: five cascading strategies in order — (1) JSON-LD, (2) `window.runParams` embedded JSON via stack-based brace extraction, (3) `__NEXT_DATA__` (Next.js), (4) `og:` meta tags + regex price scan, (5) page `<title>` + raw currency-string scan as last resort. For variant/SKU products, strategy 2 iterates `skuModule.skuPriceList` and takes the minimum sale price. Scrapes `www.aliexpress.com` in English, so prices are **USD** — the frontend shows an approximate SAR conversion (`× 3.75`). `isAmazonDirect` and `isPrime` are always `false` for AliExpress items.
 
-**`normalizeUrl(input)`** in `scraper.js`: accepts a full amazon.sa URL, a bare 10-char ASIN, or an AliExpress URL. Returns `{ url, asin, store }` where `store` is `'amazon_sa'` or `'aliexpress'`. Amazon always normalises to `https://www.amazon.sa/-/en/dp/{ASIN}`; AliExpress normalises to `https://www.aliexpress.com/item/{id}.html`.
+**`normalizeUrl(input)`** in `scraper.js`: accepts a full amazon.sa URL, a bare 10-char ASIN, or any `aliexpress.com` URL. Returns `{ url, asin, store }` where `store` is `'amazon_sa'` or `'aliexpress'`. Amazon always normalises to `https://www.amazon.sa/-/en/dp/{ASIN}`; AliExpress normalises to `https://www.aliexpress.com/item/{id}.html` (strips all query params and locale subdomains).
 
-**Scheduler** (`scheduler.js`): Uses `node-cron` with an interval stored in `settings.check_interval` (minutes). `restartScheduler()` rebuilds the cron expression when the interval changes. Checks items sequentially with a **60-second delay between each item** to avoid rate limiting.
+**Scheduler** (`scheduler.js`): Uses `node-cron` with an interval stored in `settings.check_interval` (minutes). `restartScheduler()` rebuilds the cron expression when the interval changes. `checkItem()` routes to the correct scraper by `item.store`. Checks items sequentially with a **60-second delay between each item** to avoid rate limiting.
 
-**Telegram notifications**: Bot token is read from `process.env.TELEGRAM_BOT_TOKEN` first, falling back to the `settings` table. Chat ID is always read from the `settings` table (user-editable in the app). Uses the Bot API directly via `fetch` with HTML-formatted messages. Notifications are sent when:
+**Telegram notifications**: Bot token is read from `process.env.TELEGRAM_BOT_TOKEN` first, falling back to the `settings` table. Chat ID is always read from the `settings` table. Uses the Bot API directly via `fetch` with HTML-formatted messages. Notification message builders (`buildDropMsg`, `buildStockMsg`) are store-aware — AliExpress items show the AliExpress seller name instead of Amazon-specific text. Notifications fire when:
 - Price drops by ≥ `items.notify_drop_percent` (default 5%), OR price hits `items.target_price`
 - Item transitions from out-of-stock to in-stock (if enabled in settings)
 
-**Frontend state**: Single `state` object with `user`, `items`, `checking` (Set of item IDs being checked). `renderDashboard()` rewrites `#app` on every data change. Sheets (bottom drawers) use CSS transforms; only one sheet open at a time. Chart.js instance stored in `state.sheetChart` and destroyed before reopening.
+**Frontend state**: Single `state` object with `user`, `items`, `checking` (Set of item IDs being checked). `renderDashboard()` rewrites `#app` on every data change. Sheets (bottom drawers) use CSS transforms; only one sheet open at a time. Chart.js instance stored in `state.sheetChart` and destroyed before reopening. `storeLabel(item)` and `storeColor(item)` drive store-specific display (Amazon orange `#ff9900` vs AliExpress red `#e62e04`).
 
-**Seller detection**: `is_amazon_direct` in `price_history` is set to 1 when the merchant text contains "ships from and sold by amazon" or the seller name starts with "Amazon". Shown as a badge on each item card.
+**Seller detection**: `is_amazon_direct` in `price_history` is set to 1 when the merchant text contains "ships from and sold by amazon" or the seller name starts with "Amazon". Always 0 for AliExpress. Shown as a badge on each item card.
 
 ## SQLite timestamp gotcha
 
@@ -121,5 +121,6 @@ The `relativeTime()` helper in `frontend/index.html` already does this.
 To add Noon or another store:
 1. Add a `scrapeNoon(url)` function to `scraper.js` (model after `scrapeAliExpress`)
 2. Add store detection in `normalizeUrl()` based on domain
-3. Update `checkItem()` in `scheduler.js` to route by `item.store`
-4. Update the frontend Add Item sheet to hint about supported stores
+3. Import and route in `checkItem()` in `scheduler.js` by `item.store` (the routing pattern is already there)
+4. Add `storeLabel`/`storeColor` cases in `frontend/index.html`
+5. Update the Add Item sheet hint text and the history sheet link/label logic
