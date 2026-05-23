@@ -293,14 +293,23 @@ function parseAliNextData($) {
     const nd = JSON.parse(script);
     const props = nd?.props?.pageProps;
     if (!props) return null;
-    const product = props?.product || props?.data?.product || props?.initialData?.data?.productInfo;
+    const product = props?.product
+      || props?.data?.product
+      || props?.initialData?.data?.productInfo
+      || props?.ssrData?.product
+      || props?.data?.data;
     if (!product) return null;
     const title = product?.title || product?.name || null;
     if (!title) return null;
-    const price = parseFloat(product?.price?.salePrice?.value || product?.salePrice?.value || product?.price?.value || 0) || null;
+    const priceVal = product?.price?.salePrice?.value
+      || product?.salePrice?.value
+      || product?.price?.value
+      || product?.prices?.salePrice?.minPrice
+      || product?.priceInfo?.salePrice?.minPrice;
+    const price = priceVal ? (parseFloat(priceVal) || null) : null;
     const currency = product?.price?.salePrice?.currency || product?.salePrice?.currency || product?.price?.currency || 'USD';
     const imageUrl = product?.images?.[0] || product?.mainImage || null;
-    return { title, price, originalPrice: null, currency, sellerName: null, isAmazonDirect: false, isPrime: false, inStock: true, imageUrl };
+    return { title, price: isNaN(price) ? null : price, originalPrice: null, currency, sellerName: null, isAmazonDirect: false, isPrime: false, inStock: true, imageUrl };
   } catch (_) { return null; }
 }
 
@@ -313,8 +322,17 @@ function parseAliMeta($, html) {
   const imageUrl = $('meta[property="og:image"]').attr('content') || null;
   let price = null, currency = 'USD';
   const patterns = [
-    [/["']minActivityAmount["'][^}]*?"value"\s*:\s*"([\d.]+)"/, 'USD'],
-    [/["']salePrice["'][^}]*?"value"\s*:\s*"([\d.]+)"/, 'USD'],
+    // Structured JSON fields in embedded scripts
+    [/"minActivityAmount"\s*:\s*\{[^}]*?"value"\s*:\s*"([\d.]+)"/, 'USD'],
+    [/"activityAmount"\s*:\s*\{[^}]*?"value"\s*:\s*"([\d.]+)"/, 'USD'],
+    [/"minAmount"\s*:\s*\{[^}]*?"value"\s*:\s*"([\d.]+)"/, 'USD'],
+    [/"skuActivityAmount"\s*:\s*\{[^}]*?"value"\s*:\s*"([\d.]+)"/, 'USD'],
+    [/"skuAmount"\s*:\s*\{[^}]*?"value"\s*:\s*"([\d.]+)"/, 'USD'],
+    // Formatted price strings
+    [/"formatedActivityPrice"\s*:\s*"US\s*\$([\d,.]+)"/, 'USD'],
+    [/"formatedPrice"\s*:\s*"US\s*\$([\d,.]+)"/, 'USD'],
+    [/"salePrice"\s*:\s*"US\s*\$([\d,.]+)"/, 'USD'],
+    // Raw currency in page text
     [/US\s*\$\s*([\d,]+\.?\d*)/i, 'USD'],
     [/SAR\s+([\d,]+\.?\d*)/i, 'SAR'],
   ];
@@ -356,34 +374,43 @@ async function scrapeAliExpress(url) {
 
       const $ = cheerio.load(data);
 
+      // Track best partial result across strategies for the final fallback
+      let bestTitle = null, bestImage = null;
+
       // Strategy 1: JSON-LD (cleanest if available)
       const jsonLd = parseJsonLd($);
       if (jsonLd?.title && jsonLd?.price) {
+        console.log('[aliexpress] price via JSON-LD');
         return { ...jsonLd, currency: jsonLd.currency || 'USD', isAmazonDirect: false, isPrime: false };
       }
+      if (jsonLd?.title) { bestTitle = jsonLd.title; bestImage = jsonLd.imageUrl || null; }
 
       // Strategy 2: window.runParams embedded JSON
       const runParams = extractRunParams(data);
       if (runParams) {
         const result = parseRunParamsData(runParams);
-        if (result?.title) return result;
+        if (result?.title && result?.price != null) { console.log('[aliexpress] price via runParams'); return result; }
+        if (result?.title) { bestTitle = bestTitle || result.title; bestImage = bestImage || result.imageUrl; }
       }
 
       // Strategy 3: Next.js __NEXT_DATA__
       const nextResult = parseAliNextData($);
-      if (nextResult?.title) return nextResult;
+      if (nextResult?.title && nextResult?.price != null) { console.log('[aliexpress] price via __NEXT_DATA__'); return nextResult; }
+      if (nextResult?.title) { bestTitle = bestTitle || nextResult.title; bestImage = bestImage || nextResult.imageUrl; }
 
       // Strategy 4: meta tags + regex price scan
       const metaResult = parseAliMeta($, data);
-      if (metaResult?.title) return metaResult;
+      if (metaResult?.title && metaResult?.price != null) { console.log('[aliexpress] price via meta/regex'); return metaResult; }
+      if (metaResult?.title) { bestTitle = bestTitle || metaResult.title; bestImage = bestImage || metaResult.imageUrl; }
 
-      // Strategy 5: page title + raw currency scan
-      const pageTitle = $('title').text().replace(/\s*[-|].*$/, '').trim() || null;
-      if (pageTitle) {
+      // Strategy 5: best accumulated title + raw currency scan
+      const finalTitle = bestTitle || $('title').text().replace(/\s*[-|].*$/, '').trim() || null;
+      console.log(`[aliexpress] strategies 1-4 found title=${!!finalTitle} price=none, trying raw scan`);
+      if (finalTitle) {
         const raw = rawCurrencyScan(data);
         if (raw) {
           return {
-            title: pageTitle,
+            title: finalTitle,
             price: raw.price,
             originalPrice: null,
             currency: raw.currency,
@@ -391,7 +418,7 @@ async function scrapeAliExpress(url) {
             isAmazonDirect: false,
             isPrime: false,
             inStock: true,
-            imageUrl: $('meta[property="og:image"]').attr('content') || null,
+            imageUrl: bestImage || $('meta[property="og:image"]').attr('content') || null,
           };
         }
       }
