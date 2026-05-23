@@ -136,8 +136,8 @@ async function runAllChecks() {
   console.log(`[scheduler] Checking ${items.length} active items`);
   for (const item of items) {
     await checkItem(item);
-    // Polite delay between requests
-    await new Promise(r => setTimeout(r, 3000 + Math.random() * 2000));
+    // 1-minute delay between items to avoid rate limiting
+    await new Promise(r => setTimeout(r, 60000));
   }
   console.log('[scheduler] Done');
 }

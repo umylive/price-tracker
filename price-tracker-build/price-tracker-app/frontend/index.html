@@ -202,7 +202,10 @@ const state = {
   items: [],
   checking: new Set(),
   sheetChart: null,
+  sort: 'date_desc',
 };
+
+const USD_TO_SAR = 3.75;
 
 // ── API ────────────────────────────────────────────────────────────────────────
 async function api(method, path, body) {
@@ -298,6 +301,7 @@ function renderAuth(mode = 'login') {
 // ── Render: Dashboard ──────────────────────────────────────────────────────────
 function renderDashboard() {
   const items = state.items;
+  const sorted = sortItems(items);
   document.getElementById('app').innerHTML = `
     <div id="app-inner">
       <header>
@@ -308,7 +312,7 @@ function renderDashboard() {
         <button class="btn-icon" data-action="logout" title="Logout" style="color:var(--muted);font-size:16px">⏏</button>
       </header>
       <main>
-        ${items.length === 0 ? renderEmpty() : `<div class="grid">${items.map(renderCard).join('')}</div>`}
+        ${items.length === 0 ? renderEmpty() : `${renderSortBar()}<div class="grid">${sorted.map(renderCard).join('')}</div>`}
       </main>
     </div>`;
 }
@@ -320,6 +324,38 @@ function storeLabel(item) {
 
 function itemCurrency(item) {
   return item.latest?.currency || (item.store === 'aliexpress' ? 'USD' : 'SAR');
+}
+
+function sortItems(items) {
+  const arr = [...items];
+  switch (state.sort) {
+    case 'date_asc':    return arr.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+    case 'date_desc':   return arr.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    case 'price_asc':   return arr.sort((a, b) => (a.latest?.price ?? Infinity) - (b.latest?.price ?? Infinity));
+    case 'price_desc':  return arr.sort((a, b) => (b.latest?.price ?? -Infinity) - (a.latest?.price ?? -Infinity));
+    case 'store':       return arr.sort((a, b) => storeLabel(a).localeCompare(storeLabel(b)));
+    case 'discount': {
+      const disc = i => { const p = i.latest?.price, o = i.latest?.original_price; return (p && o && o > p) ? (o - p) / o : 0; };
+      return arr.sort((a, b) => disc(b) - disc(a));
+    }
+    case 'price_drop': {
+      const drop = i => { const c = i.latest?.price, p = i.prevPrice; return (c && p && p > c) ? (p - c) / p : 0; };
+      return arr.sort((a, b) => drop(b) - drop(a));
+    }
+    default: return arr;
+  }
+}
+
+function renderSortBar() {
+  const opts = [
+    ['date_desc','Newest'],['date_asc','Oldest'],
+    ['price_asc','Price ↑'],['price_desc','Price ↓'],
+    ['store','Store'],['discount','Discount'],['price_drop','Price Drop'],
+  ];
+  return `<div style="display:flex;align-items:center;gap:6px;margin-bottom:14px;flex-wrap:wrap">
+    <span style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Sort:</span>
+    ${opts.map(([v, l]) => `<button class="btn btn-sm ${state.sort===v?'btn-primary':'btn-ghost'}" data-action="sort" data-sort="${v}">${l}</button>`).join('')}
+  </div>`;
 }
 
 function renderEmpty() {
@@ -389,6 +425,10 @@ function renderCard(item) {
         : `<div style="color:var(--muted);font-size:14px">${hasError ? 'Check failed' : 'Not yet checked'}</div>`
       }
     </div>
+    ${cur === 'USD' && currentPrice != null
+      ? `<div style="font-size:12px;color:var(--muted);padding:2px 14px 0">≈ SAR ${fmtPrice(currentPrice * USD_TO_SAR)}</div>`
+      : ''
+    }
 
     <div class="card-badges">
       ${sellerBadge}${primeBadge}${stockBadge}${inactiveBadge}${targetBadge}
@@ -405,7 +445,7 @@ function renderCard(item) {
       </div>
     </div>
 
-    <div class="card-checked">Last checked: ${relativeTime(item.last_checked_at)}</div>
+    <div class="card-checked">Added: ${relativeTime(item.created_at)} · Checked: ${relativeTime(item.last_checked_at)}</div>
 
     ${hasError ? `<div class="card-error">⚠ ${escHtml(p.error)}</div>` : ''}
 
@@ -546,11 +586,12 @@ function renderHistorySheet(item, allHistory, validHistory) {
             const dot = h.is_amazon_direct
               ? `<span class="seller-dot amazon"></span>`
               : `<span class="seller-dot third"></span>`;
+            const sellerText = h.is_amazon_direct ? (h.seller_name || 'Amazon SA') : (h.seller_name || '—');
             return `<tr>
               <td style="white-space:nowrap">${new Date(h.checked_at).toLocaleString('en-SA')}</td>
               <td>${h.price != null ? fmtPrice(h.price) : '—'}</td>
               <td style="color:var(--muted)">${h.original_price && h.original_price !== h.price ? fmtPrice(h.original_price) : '—'}</td>
-              <td>${dot}${escHtml(h.seller_name || '—')}${h.is_prime ? ' ⚡' : ''}</td>
+              <td>${dot}${escHtml(sellerText)}${h.is_prime ? ' ⚡' : ''}</td>
               <td>${h.in_stock ? '<span style="color:var(--success)">✓</span>' : '<span style="color:var(--danger)">✗</span>'}</td>
             </tr>`;
           }).join('')}
@@ -831,19 +872,21 @@ document.addEventListener('click', async e => {
     return;
   }
 
+  // ── Sort ──
+  if (action === 'sort') { state.sort = el.dataset.sort; renderDashboard(); return; }
+
   // ── Check Item ──
   if (action === 'check-item') {
     state.checking.add(id);
     renderDashboard();
     try {
       await api('POST', `/api/items/${id}/check`);
+      state.checking.delete(id);  // clear before loadItems re-renders
       await loadItems();
     } catch (err) {
       state.checking.delete(id);
       renderDashboard();
       alert(`Check failed: ${err.message}`);
-    } finally {
-      state.checking.delete(id);
     }
     return;
   }

@@ -210,33 +210,102 @@ async function scrapeAmazonSA(url) {
   throw lastError || new Error('Scraping failed');
 }
 
+function tryParseRunParams(html) {
+  const idx = html.indexOf('window.runParams');
+  if (idx === -1) return null;
+  const startBrace = html.indexOf('{', idx);
+  if (startBrace === -1) return null;
+
+  // Stack-based brace matching to extract the full JSON object
+  let depth = 0, inString = false, escape = false;
+  let i = startBrace;
+  const limit = Math.min(html.length, startBrace + 800000);
+  for (; i < limit; i++) {
+    const c = html[i];
+    if (escape) { escape = false; continue; }
+    if (c === '\\' && inString) { escape = true; continue; }
+    if (c === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (c === '{') depth++;
+    else if (c === '}') { if (--depth === 0) break; }
+  }
+  if (depth !== 0) return null;
+
+  try {
+    const rp = JSON.parse(html.substring(startBrace, i + 1));
+    const d = rp.data || rp;
+    const pm = d.priceModule || {};
+
+    let price = pm.minActivityAmount?.value ?? pm.minAmount?.value ?? null;
+    if (price == null && pm.formatedActivityPrice) price = parsePrice(pm.formatedActivityPrice);
+    if (price == null && pm.formatedPrice) price = parsePrice(pm.formatedPrice);
+
+    const currency = pm.minActivityAmount?.currency ?? pm.minAmount?.currency ?? 'USD';
+
+    let originalPrice = pm.maxAmount?.value != null ? parseFloat(pm.maxAmount.value) : null;
+    if (originalPrice != null && originalPrice === parseFloat(price)) originalPrice = null;
+
+    const title = d.titleModule?.subject || null;
+
+    let sellerName = d.storeModule?.storeName || null;
+    if (sellerName) try { sellerName = JSON.parse('"' + sellerName + '"'); } catch (_) {}
+
+    const inStock = (d.stockModule?.availQuantity ?? 1) > 0;
+
+    const paths = d.imageModule?.imagePathList || [];
+    const imageUrl = paths[0] ? (paths[0].startsWith('//') ? 'https:' + paths[0] : paths[0]) : null;
+
+    if (!title && price == null) return null;
+    return { title, price: price != null ? parseFloat(price) : null, originalPrice, currency, sellerName, isAmazonDirect: false, isPrime: false, inStock, imageUrl };
+  } catch (_) {
+    return null;
+  }
+}
+
 function parseAliExpressHtml(html, $) {
   const title = $('meta[property="og:title"]').attr('content')?.replace(/\s*[-|]\s*AliExpress.*$/i, '').trim() ||
+                $('h1').first().text().trim().replace(/\s*[-|]\s*AliExpress.*$/i, '') ||
                 $('title').text().replace(/\s*[-|]\s*AliExpress.*$/i, '').trim() || null;
   if (!title) return null;
 
+  // Full JSON parse of window.runParams is the most reliable approach
+  const rp = tryParseRunParams(html);
+  if (rp?.price != null || rp?.title) return { ...rp, title: rp.title || title };
+
+  // Fallback: Facebook product meta tags (very reliable when present)
   let price = null;
-  const pricePatterns = [
-    /"formatedActivityPrice"\s*:\s*"([^"]+)"/,
-    /"formatedPrice"\s*:\s*"([^"]+)"/,
-    /"minPrice"\s*:\s*"([^"]+)"/,
-    /"salePrice"\s*:\s*"([^"]+)"/,
-  ];
-  for (const pat of pricePatterns) {
-    const m = html.match(pat);
-    if (m) { const p = parsePrice(m[1]); if (p != null) { price = p; break; } }
-  }
+  const fbPrice = $('meta[property="product:price:amount"]').attr('content');
+  if (fbPrice) price = parseFloat(fbPrice) || null;
+
+  // Fallback: microdata
   if (price == null) {
-    const mp = $('meta[itemprop="price"]').attr('content');
+    const mp = $('meta[itemprop="price"]').attr('content') || $('[itemprop="price"]').attr('content');
     if (mp) price = parseFloat(mp) || null;
+  }
+
+  // Fallback: regex patterns from embedded JS
+  if (price == null) {
+    for (const pat of [
+      /"formatedActivityPrice"\s*:\s*"([^"]+)"/,
+      /"formatedPrice"\s*:\s*"([^"]+)"/,
+      /"activityAmount"\s*:[^}]*"formatedAmount"\s*:\s*"([^"]+)"/,
+      /"minAmount"\s*:[^}]*"formatedAmount"\s*:\s*"([^"]+)"/,
+      /"salePrice"\s*:\s*"([^"]+)"/,
+      /"minPrice"\s*:\s*"([^"]+)"/,
+    ]) {
+      const m = html.match(pat);
+      if (m) { const p = parsePrice(m[1]); if (p != null) { price = p; break; } }
+    }
   }
 
   let originalPrice = null;
   const origMatch = html.match(/"formatedOriginalPrice"\s*:\s*"([^"]+)"/) ||
-                    html.match(/"originalPriceStr"\s*:\s*"([^"]+)"/);
+                    html.match(/"originalPriceStr"\s*:\s*"([^"]+)"/) ||
+                    html.match(/"maxAmount"\s*:[^}]*"formatedAmount"\s*:\s*"([^"]+)"/);
   if (origMatch) { const op = parsePrice(origMatch[1]); if (op != null && op !== price) originalPrice = op; }
 
-  let currency = $('meta[itemprop="priceCurrency"]').attr('content') || 'USD';
+  let currency = $('meta[property="product:price:currency"]').attr('content') ||
+                 $('meta[itemprop="priceCurrency"]').attr('content') || 'USD';
   const currMatch = html.match(/"priceCurrency"\s*:\s*"([A-Z]{3})"/) ||
                     html.match(/"currency"\s*:\s*"([A-Z]{3})"/);
   if (currMatch) currency = currMatch[1];
@@ -249,9 +318,7 @@ function parseAliExpressHtml(html, $) {
 
   const sellerMatch = html.match(/"storeName"\s*:\s*"((?:[^"\\]|\\.)*)"/);
   let sellerName = null;
-  if (sellerMatch) {
-    try { sellerName = JSON.parse('"' + sellerMatch[1] + '"'); } catch (_) { sellerName = sellerMatch[1]; }
-  }
+  if (sellerMatch) try { sellerName = JSON.parse('"' + sellerMatch[1] + '"'); } catch (_) { sellerName = sellerMatch[1]; }
 
   return { title, price, originalPrice, currency, sellerName, isAmazonDirect: false, isPrime: false, inStock, imageUrl };
 }
