@@ -31,13 +31,7 @@ async function checkItem(item) {
   let scraped;
   try {
     if (item.store === 'aliexpress') {
-      const sRows = db.prepare('SELECT key, value FROM settings').all();
-      const sMap = Object.fromEntries(sRows.map(r => [r.key, r.value]));
-      scraped = await scrapeAliExpress(item.url, {
-        appKey: process.env.ALIEXPRESS_APP_KEY || sMap.aliexpress_app_key,
-        appSecret: process.env.ALIEXPRESS_APP_SECRET || sMap.aliexpress_app_secret,
-        trackingId: sMap.aliexpress_tracking_id,
-      });
+      scraped = await scrapeAliExpress(item.url);
     } else {
       scraped = await scrapeAmazonSA(item.url);
     }
