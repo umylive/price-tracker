@@ -117,7 +117,17 @@ app.post('/api/items', requireAuth, async (req, res) => {
   let imageUrl = null;
   let scraped = null;
   try {
-    scraped = store === 'aliexpress' ? await scrapeAliExpress(url) : await scrapeAmazonSA(url);
+    if (store === 'aliexpress') {
+      const sRows = db.prepare('SELECT key, value FROM settings').all();
+      const sMap = Object.fromEntries(sRows.map(r => [r.key, r.value]));
+      scraped = await scrapeAliExpress(url, {
+        appKey: process.env.ALIEXPRESS_APP_KEY || sMap.aliexpress_app_key,
+        appSecret: process.env.ALIEXPRESS_APP_SECRET || sMap.aliexpress_app_secret,
+        trackingId: sMap.aliexpress_tracking_id,
+      });
+    } else {
+      scraped = await scrapeAmazonSA(url);
+    }
     if (!finalName && scraped.title) finalName = scraped.title;
     imageUrl = scraped.imageUrl || null;
   } catch (e) {
@@ -208,19 +218,22 @@ app.get('/api/settings', requireAuth, (req, res) => {
   const rows = db.prepare('SELECT key, value FROM settings').all();
   const settings = {};
   rows.forEach(r => {
-    if (r.key === 'telegram_bot_token' && r.value && r.value.length > 8) {
-      settings[r.key] = r.value.slice(0, 6) + '...' + r.value.slice(-4);
+    if ((r.key === 'telegram_bot_token' || r.key === 'aliexpress_app_secret') && r.value && r.value.length > 8) {
+      settings[r.key] = r.value.slice(0, 4) + '...' + r.value.slice(-4);
     } else {
       settings[r.key] = r.value;
     }
   });
   settings.telegram_via_env = !!process.env.TELEGRAM_BOT_TOKEN;
+  settings.aliexpress_via_env = !!(process.env.ALIEXPRESS_APP_KEY && process.env.ALIEXPRESS_APP_SECRET);
   res.json(settings);
 });
 
 app.put('/api/settings', requireAuth, (req, res) => {
-  let allowed = ['telegram_bot_token', 'telegram_chat_id', 'check_interval', 'notify_price_drop', 'notify_back_in_stock'];
+  let allowed = ['telegram_bot_token', 'telegram_chat_id', 'check_interval', 'notify_price_drop', 'notify_back_in_stock', 'aliexpress_app_key', 'aliexpress_app_secret', 'aliexpress_tracking_id'];
   if (process.env.TELEGRAM_BOT_TOKEN) allowed = allowed.filter(k => k !== 'telegram_bot_token');
+  if (process.env.ALIEXPRESS_APP_KEY) allowed = allowed.filter(k => k !== 'aliexpress_app_key');
+  if (process.env.ALIEXPRESS_APP_SECRET) allowed = allowed.filter(k => k !== 'aliexpress_app_secret');
   const update = db.prepare('UPDATE settings SET value = ? WHERE key = ?');
   const batch = db.transaction(updates => {
     for (const [key, value] of updates) {

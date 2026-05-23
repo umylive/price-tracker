@@ -742,6 +742,32 @@ async function openSettingsSheet() {
       </div>
 
       <div class="settings-section">
+        <h3>AliExpress API (Recommended)</h3>
+        <p style="font-size:13px;color:var(--muted);margin-bottom:12px">AliExpress now blocks HTML scraping. For reliable price data, use the free affiliate API: sign up at <strong style="color:var(--text)">portals.aliexpress.com</strong>, create an app, and paste the credentials below.</p>
+        ${settings.aliexpress_via_env ? `
+        <div class="form-group">
+          <label>App Key &amp; Secret</label>
+          <div style="display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--surface2);border-radius:8px;font-size:13px;color:var(--text2)">
+            <span style="font-size:16px">🔑</span>
+            <span>Set via environment variables — cannot be changed here.</span>
+          </div>
+        </div>` : `
+        <div class="form-group">
+          <label>App Key</label>
+          <input type="text" id="s-ae-key" value="${escHtml(settings.aliexpress_app_key || '')}" placeholder="e.g. 12345678">
+        </div>
+        <div class="form-group">
+          <label>App Secret</label>
+          <input type="password" id="s-ae-secret" placeholder="${settings.aliexpress_app_secret ? '(saved — enter to change)' : 'Paste app secret here'}" autocomplete="off">
+        </div>`}
+        <div class="form-group">
+          <label>Tracking ID <span style="font-weight:400;color:var(--muted)">(optional)</span></label>
+          <input type="text" id="s-ae-tracking" value="${escHtml(settings.aliexpress_tracking_id || '')}" placeholder="e.g. default">
+          <div class="hint">Any string — used for affiliate attribution. Leave blank to use "default".</div>
+        </div>
+      </div>
+
+      <div class="settings-section">
         <h3>Account</h3>
         <p style="font-size:13px;color:var(--muted)">Logged in as <strong style="color:var(--text)">${escHtml(state.user?.username || '')}</strong></p>
         <button class="btn btn-danger btn-sm" data-action="logout" style="margin-top:8px">Sign Out</button>
@@ -913,9 +939,15 @@ document.addEventListener('click', async e => {
     const interval = document.getElementById('s-interval')?.value;
     const notifyDrop = document.getElementById('s-notify-drop')?.checked ? '1' : '0';
     const notifyStock = document.getElementById('s-notify-stock')?.checked ? '1' : '0';
+    const aeKey = document.getElementById('s-ae-key')?.value.trim();
+    const aeSecret = document.getElementById('s-ae-secret')?.value.trim();
+    const aeTracking = document.getElementById('s-ae-tracking')?.value.trim();
     const payload = { check_interval: interval, notify_price_drop: notifyDrop, notify_back_in_stock: notifyStock };
     if (chatId) payload.telegram_chat_id = chatId;
     if (botToken) payload.telegram_bot_token = botToken;
+    if (aeKey !== undefined) payload.aliexpress_app_key = aeKey;
+    if (aeSecret) payload.aliexpress_app_secret = aeSecret;
+    if (aeTracking !== undefined) payload.aliexpress_tracking_id = aeTracking;
     const btn = el;
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner"></span>';

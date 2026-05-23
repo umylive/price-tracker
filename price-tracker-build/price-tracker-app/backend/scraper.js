@@ -1,5 +1,6 @@
 const axios = require('axios');
 const cheerio = require('cheerio');
+const crypto = require('crypto');
 
 const USER_AGENTS = [
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
@@ -389,16 +390,80 @@ function parseAliExpressHtml(html, $) {
   return { title, price, originalPrice, currency, sellerName, isAmazonDirect: false, isPrime: false, inStock, imageUrl };
 }
 
-async function scrapeAliExpress(url) {
+// AliExpress Open Platform affiliate API — requires free account at portals.aliexpress.com
+function aliExpressApiSign(params, secret) {
+  const sorted = Object.keys(params).sort().map(k => `${k}${params[k]}`).join('');
+  return crypto.createHash('md5').update(`${secret}${sorted}${secret}`, 'utf8').digest('hex').toUpperCase();
+}
+
+async function scrapeAliExpressApi(itemId, appKey, appSecret, trackingId) {
+  const params = {
+    method: 'aliexpress.affiliate.product.detail.get',
+    app_key: appKey,
+    timestamp: String(Date.now()),
+    sign_method: 'md5',
+    product_ids: String(itemId),
+    target_currency: 'USD',
+    target_language: 'EN',
+    tracking_id: trackingId || 'default',
+    fields: 'productId,productTitle,productMainImageUrl,originalPrice,salePrice,currency',
+  };
+  params.sign = aliExpressApiSign(params, appSecret);
+
+  const { data, status } = await axios.get('https://api-sg.aliexpress.com/sync', {
+    params,
+    timeout: 15000,
+  });
+  if (status !== 200) throw new Error(`AliExpress API HTTP ${status}`);
+
+  const resp = data?.aliexpress_affiliate_product_detail_get_response?.resp_result;
+  if (!resp || resp.resp_code !== 200) {
+    throw new Error(`AliExpress API: ${resp?.resp_msg || JSON.stringify(data)}`);
+  }
+
+  const product = resp.result?.products?.product?.[0];
+  if (!product) throw new Error('No product in AliExpress API response');
+
+  const price = parseFloat(product.sale_price) || null;
+  const originalPrice = parseFloat(product.original_price) || null;
+
+  return {
+    title: product.product_title || null,
+    price,
+    originalPrice: originalPrice && originalPrice !== price ? originalPrice : null,
+    currency: product.currency_code || product.currency || 'USD',
+    sellerName: null,
+    isAmazonDirect: false,
+    isPrime: false,
+    inStock: true,
+    imageUrl: product.product_main_image_url || null,
+  };
+}
+
+async function scrapeAliExpress(url, options = {}) {
+  const itemId = extractAliExpressItemId(url);
+  const { appKey, appSecret, trackingId } = options;
   let lastError;
+
+  // Try the official affiliate API first when credentials are configured
+  if (itemId && appKey && appSecret) {
+    try {
+      const result = await scrapeAliExpressApi(itemId, appKey, appSecret, trackingId);
+      if (result.price != null || result.title) return result;
+    } catch (e) {
+      console.warn(`[aliexpress] API failed, falling back to HTML scraping: ${e.message}`);
+    }
+  }
+
   for (let attempt = 0; attempt < 3; attempt++) {
     if (attempt > 0) await new Promise(r => setTimeout(r, 2000 * attempt));
     try {
+      // Cookie locks AliExpress to global English site and prevents redirect to ar.aliexpress.com
       const { data, status } = await axios.get(url, {
         headers: {
           'User-Agent': getRandomUA(),
           'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-          'Accept-Language': 'en-US,en;q=0.9,ar;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.9',
           'Accept-Encoding': 'gzip, deflate, br',
           'Connection': 'keep-alive',
           'Cache-Control': 'no-cache',
@@ -407,6 +472,7 @@ async function scrapeAliExpress(url) {
           'Sec-Fetch-Mode': 'navigate',
           'Sec-Fetch-Site': 'same-origin',
           'Upgrade-Insecure-Requests': '1',
+          'Cookie': 'aep_usuc_f=site=glo&c_tp=USD&region=US&b_locale=en_US; intl_locale=en_US',
         },
         timeout: 25000,
         maxRedirects: 5,
@@ -438,4 +504,4 @@ async function scrapeAliExpress(url) {
   throw lastError || new Error('AliExpress scraping failed');
 }
 
-module.exports = { scrapeAmazonSA, scrapeAliExpress, normalizeUrl, extractASIN };
+module.exports = { scrapeAmazonSA, scrapeAliExpress, scrapeAliExpressApi, normalizeUrl, extractASIN };
