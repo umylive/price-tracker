@@ -421,19 +421,9 @@ async function scrapeAliExpress(url) {
     const html = await page.content();
     const $ = cheerio.load(html);
 
-    const markers = {
-      runParams: html.includes('window.runParams'),
-      nextData: html.includes('__NEXT_DATA__'),
-      ld: html.includes('"@type":"Product"'),
-      salePrice: html.includes('salePrice'),
-      // Only flag real CAPTCHA challenge UI — not just the captcha JS loader
-      captcha: $('[id*="baxia"], #nc_1_wrapper, [class*="captcha-verify"]').length > 0
-        || html.includes('window._baxia_') || html.includes('captchaVerify'),
-    };
-    console.log(`[aliexpress] rendered ${html.length}b — ${JSON.stringify(markers)}`);
+    console.log(`[aliexpress] rendered ${html.length}b — runParams:${html.includes('window.runParams')} nextData:${html.includes('__NEXT_DATA__')} ld:${html.includes('"@type":"Product"')} salePrice:${html.includes('salePrice')}`);
 
-    if (markers.captcha) throw new Error('CAPTCHA challenge detected — bot protection triggered');
-
+    // Try all parse strategies before checking for captcha
     const ld = parseJsonLd($);
     if (ld?.title && ld?.price != null) { console.log('[aliexpress] via JSON-LD'); return { ...ld, isAmazonDirect: false, isPrime: false }; }
 
@@ -449,7 +439,10 @@ async function scrapeAliExpress(url) {
     const meta = parseAliMeta($, html);
     if (meta?.title) { console.log('[aliexpress] via og:meta'); return meta; }
 
-    console.log('[aliexpress] parse failed — snippet:', html.slice(0, 800).replace(/\s+/g, ' '));
+    // Parsing failed — check if a real CAPTCHA challenge UI is visible (not just JS loader)
+    const captchaActive = $('[id="nc_1_wrapper"], #baxia-dialog, .nc-lang-cnt').length > 0;
+    console.log('[aliexpress] parse failed, captchaUI:', captchaActive, '— snippet:', html.slice(0, 800).replace(/\s+/g, ' '));
+    if (captchaActive) throw new Error('CAPTCHA challenge detected — bot protection triggered');
     throw new Error('Could not extract product data from AliExpress page');
   } finally {
     if (browser) await browser.close().catch(() => {});
