@@ -173,6 +173,15 @@
     .settings-section h3 { font-size: 13px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 12px; }
     .masked-val { font-family: monospace; background: var(--surface2); padding: 2px 6px; border-radius: 4px; font-size: 12px; }
 
+    /* ── Stats Bar ── */
+    .stats-bar { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 20px; }
+    .stat-tile { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; display: flex; flex-direction: column; transition: transform .15s, box-shadow .15s; }
+    .stat-tile:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,.3); }
+    .stat-tile-icon { font-size: 20px; margin-bottom: 4px; line-height: 1; }
+    .stat-tile-value { font-weight: 700; line-height: 1.1; }
+    .stat-tile-label { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin-top: 6px; }
+    .stat-tile-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
     /* ── Responsive ── */
     @media (max-width: 600px) {
       .form-row { grid-template-columns: 1fr; }
@@ -300,6 +309,94 @@ function renderAuth(mode = 'login') {
     </div>`;
 }
 
+// ── Render: Stats Bar ─────────────────────────────────────────────────────────
+function renderStatsBar() {
+  const items = state.items;
+  if (items.length === 0) return '';
+
+  const total = items.length;
+  const activeCount = items.filter(i => i.active).length;
+  const pausedCount = total - activeCount;
+  const inStockCount = items.filter(i => i.latest && !i.latest.error && i.latest.in_stock).length;
+  const outOfStockCount = items.filter(i => i.latest && !i.latest.error && !i.latest.in_stock).length;
+  const onSaleCount = items.filter(i => {
+    const p = i.latest;
+    return p && !p.error && p.original_price && p.price && p.original_price > p.price;
+  }).length;
+  const dropCount = items.filter(i => {
+    const c = i.latest ? i.latest.price : null;
+    const p = i.prevPrice;
+    return c != null && p != null && p > c;
+  }).length;
+  const withTargetCount = items.filter(i => i.target_price).length;
+  const atTargetCount = items.filter(i =>
+    i.target_price && i.latest && i.latest.price != null && i.latest.price <= i.target_price
+  ).length;
+  const totalValue = items.reduce(function(sum, i) { return sum + (i.latest && i.latest.price ? i.latest.price : 0); }, 0);
+
+  const tiles = [
+    {
+      icon: '📦',
+      value: String(total),
+      fs: '28px',
+      label: 'Items Tracked',
+      sub: activeCount + ' active' + (pausedCount > 0 ? ' · ' + pausedCount + ' paused' : ''),
+      color: 'var(--accent)',
+    },
+    {
+      icon: '✅',
+      value: String(inStockCount),
+      fs: '28px',
+      label: 'In Stock',
+      sub: outOfStockCount + ' out of stock',
+      color: 'var(--success)',
+    },
+    {
+      icon: '🏷️',
+      value: String(onSaleCount),
+      fs: '28px',
+      label: 'On Sale',
+      sub: 'Amazon price reduced',
+      color: 'var(--amazon)',
+    },
+    {
+      icon: '📉',
+      value: String(dropCount),
+      fs: '28px',
+      label: 'Price Drops',
+      sub: 'since last check',
+      color: 'var(--success)',
+    },
+    {
+      icon: '🎯',
+      value: String(atTargetCount),
+      fs: '28px',
+      label: 'At Target',
+      sub: 'of ' + withTargetCount + ' with target',
+      color: 'var(--warning)',
+    },
+    {
+      icon: '💰',
+      value: 'SAR ' + fmtPrice(totalValue),
+      fs: '18px',
+      label: 'Portfolio Value',
+      sub: 'sum of current prices',
+      color: 'var(--accent)',
+    },
+  ];
+
+  return '<div class="stats-bar">' +
+    tiles.map(function(t) {
+      return '<div class="stat-tile" style="border-top:3px solid ' + t.color + '">' +
+        '<div class="stat-tile-icon">' + t.icon + '</div>' +
+        '<div class="stat-tile-value" style="font-size:' + t.fs + ';color:' + t.color + '">' + t.value + '</div>' +
+        '<div class="stat-tile-label">' + t.label + '</div>' +
+        '<div class="stat-tile-sub">' + t.sub + '</div>' +
+        '</div>';
+    }).join('') +
+    '</div>';
+}
+
 // ── Render: Dashboard ──────────────────────────────────────────────────────────
 function renderDashboard() {
   const items = state.items;
@@ -314,7 +411,7 @@ function renderDashboard() {
         <button class="btn-icon" data-action="logout" title="Logout" style="color:var(--muted);font-size:16px">⏏</button>
       </header>
       <main>
-        ${items.length === 0 ? renderEmpty() : `${renderSortBar()}<div class="grid">${sorted.map(renderCard).join('')}</div>`}
+        ${items.length === 0 ? renderEmpty() : `${renderStatsBar()}${renderSortBar()}<div class="grid">${sorted.map(renderCard).join('')}</div>`}
       </main>
     </div>`;
 }
