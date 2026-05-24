@@ -263,6 +263,44 @@ app.get('/api/notifications', requireAuth, (req, res) => {
   res.json(rows);
 });
 
+// ── Purchases ─────────────────────────────────────────────────────────────────
+
+app.get('/api/purchases', requireAuth, (req, res) => {
+  const rows = db.prepare(`
+    SELECT p.*, i.name as item_name, i.url as item_url, i.image_url as item_image_url,
+           (SELECT MAX(ph.price) FROM price_history ph WHERE ph.item_id = p.item_id AND ph.error IS NULL) as highest_price,
+           (SELECT MIN(ph.price) FROM price_history ph WHERE ph.item_id = p.item_id AND ph.error IS NULL) as lowest_price
+    FROM purchases p
+    JOIN items i ON p.item_id = i.id
+    WHERE i.user_id = ?
+    ORDER BY p.purchased_at DESC
+  `).all(req.user.id);
+  res.json(rows);
+});
+
+app.post('/api/items/:id/purchases', requireAuth, (req, res) => {
+  const item = db.prepare('SELECT * FROM items WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+  if (!item) return res.status(404).json({ error: 'Not found' });
+  const { purchased_price, currency, purchased_at, notes } = req.body || {};
+  if (!purchased_price || isNaN(parseFloat(purchased_price))) {
+    return res.status(400).json({ error: 'Purchase price is required' });
+  }
+  const { lastInsertRowid } = db.prepare(`
+    INSERT INTO purchases (item_id, purchased_price, currency, purchased_at, notes)
+    VALUES (?, ?, ?, COALESCE(?, datetime('now')), ?)
+  `).run(item.id, parseFloat(purchased_price), currency || 'SAR', purchased_at || null, notes || null);
+  res.json(db.prepare('SELECT * FROM purchases WHERE id = ?').get(lastInsertRowid));
+});
+
+app.delete('/api/purchases/:id', requireAuth, (req, res) => {
+  const row = db.prepare(`
+    SELECT p.* FROM purchases p JOIN items i ON p.item_id = i.id WHERE p.id = ? AND i.user_id = ?
+  `).get(req.params.id, req.user.id);
+  if (!row) return res.status(404).json({ error: 'Not found' });
+  db.prepare('DELETE FROM purchases WHERE id = ?').run(row.id);
+  res.json({ ok: true });
+});
+
 // ── SPA fallback ──────────────────────────────────────────────────────────────
 
 app.get('*', (req, res) => {

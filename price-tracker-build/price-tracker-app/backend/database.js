@@ -75,6 +75,15 @@ db.exec(`
     key TEXT PRIMARY KEY,
     value TEXT
   );
+
+  CREATE TABLE IF NOT EXISTS purchases (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+    purchased_price REAL NOT NULL,
+    currency TEXT NOT NULL DEFAULT 'SAR',
+    purchased_at TEXT NOT NULL DEFAULT (datetime('now')),
+    notes TEXT
+  );
 `);
 
 const insertSetting = db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)');
