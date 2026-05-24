@@ -182,6 +182,17 @@
     .stat-tile-label { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin-top: 6px; }
     .stat-tile-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
 
+    /* ── View tabs ── */
+    .view-tabs { display: flex; gap: 2px; background: var(--surface2); border-radius: 8px; padding: 3px; flex-shrink: 0; }
+    .view-tab { padding: 5px 12px; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; border: none; background: transparent; color: var(--muted); transition: background .15s, color .15s; white-space: nowrap; }
+    .view-tab.active { background: var(--accent); color: #fff; }
+    .view-tab:hover:not(.active) { background: var(--border); color: var(--text); }
+
+    /* ── Card highlights ── */
+    .card.highlight-low { border-color: var(--prime); box-shadow: 0 0 0 1px var(--prime)33; }
+    .card.highlight-sale { border-color: var(--amazon); box-shadow: 0 0 0 1px var(--amazon)33; }
+    .card.highlight-drop { border-color: var(--success); box-shadow: 0 0 0 1px var(--success)33; }
+
     /* ── Group headers ── */
     .group-header { font-size: 12px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .6px; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
     .group-count { background: var(--surface2); border: 1px solid var(--border); border-radius: 20px; padding: 1px 8px; font-size: 12px; font-weight: 600; }
@@ -234,6 +245,8 @@ const state = {
   sheetChart: null,
   sort: 'date_desc',
   groupBy: 'none',
+  view: 'main',
+  purchasedItems: null,
 };
 
 const USD_TO_SAR = 3.75;
@@ -285,6 +298,29 @@ function fmtDate(s) {
   const parts = datePart.split('-');
   const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   return months[parseInt(parts[1]) - 1] + ' ' + parseInt(parts[2]) + ', ' + parts[0];
+}
+
+function detectCategory(name) {
+  if (!name) return 'Other';
+  const n = name.toLowerCase();
+  if (/iphone|samsung.*(galaxy|s\d|a\d|note)|xiaomi|oppo|realme|vivo|oneplus|pixel|nokia|redmi|poco|smartphone|mobile phone|cell phone/.test(n)) return 'Mobile Phones';
+  if (/ipad|galaxy tab|surface.*pro|lenovo.*tab|kindle.*fire|tablet/.test(n)) return 'Tablets';
+  if (/laptop|notebook|macbook|thinkpad|chromebook|gaming laptop|ultrabook/.test(n)) return 'Laptops & PCs';
+  if (/apple watch|galaxy watch|garmin|fitbit|smartwatch|smart watch|fitness band|sport band/.test(n)) return 'Wearables';
+  if (/headphone|earphone|earbuds|airpod|tws|speaker|soundbar|sound bar|subwoofer|audio/.test(n)) return 'Audio';
+  if (/\btv\b|television|qled|oled|smart tv|\d+.inch.*tv|monitor|gaming monitor|curved.*screen/.test(n)) return 'TVs & Monitors';
+  if (/gaming chair|office chair|ergonomic chair|\bchair\b|bar stool|accent chair|recliner/.test(n)) return 'Chairs & Seating';
+  if (/\bsofa\b|couch|sectional|bed frame|wardrobe|dresser|cabinet|bookshelf|\bshelf\b|coffee table|dining table|side table|\bdesk\b|furniture/.test(n)) return 'Furniture';
+  if (/\bcamera\b|dslr|mirrorless|gopro|action cam|ring light|tripod|lens/.test(n)) return 'Cameras';
+  if (/vacuum|washing machine|dishwasher|refrigerator|\bfridge\b|microwave|air condition|\bac \b|water heater|dryer/.test(n)) return 'Home Appliances';
+  if (/\boven\b|air fryer|blender|coffee maker|kettle|toaster|cookware|\bpot\b|\bpan\b|kitchen knife/.test(n)) return 'Kitchen';
+  if (/playstation|xbox|nintendo|gaming|game controller|ps[45]|console/.test(n)) return 'Gaming';
+  if (/printer|ink cartridge|scanner|projector|router|modem|hard drive|ssd|\bram\b|keyboard|mouse.*wireless|usb hub/.test(n)) return 'Tech Accessories';
+  if (/perfume|cologne|skincare|moisturizer|serum|makeup|lipstick|foundation|fragrance/.test(n)) return 'Beauty';
+  if (/protein powder|supplement|vitamin|creatine|gym|dumbbell|treadmill|yoga mat/.test(n)) return 'Health & Fitness';
+  if (/\bcar \b|auto |vehicle|tire|car charger|car seat|dashboard cam/.test(n)) return 'Automotive';
+  if (/book|novel|textbook|journal/.test(n)) return 'Books';
+  return 'Other';
 }
 
 function getDateGroup(iso) {
@@ -365,8 +401,12 @@ function renderStatsBar() {
   }).length;
   const dropCount = items.filter(i => {
     const c = i.latest ? i.latest.price : null;
-    const p = i.prevPrice;
-    return c != null && p != null && p > c;
+    const h = i.highestPrice;
+    return c != null && h != null && h > 0 && (h - c) / h >= 0.05;
+  }).length;
+  const newLowCount = items.filter(i => {
+    return i.latest && i.latest.price != null && i.lowestPrice != null &&
+      i.latest.price <= i.lowestPrice && i.prevPrice != null && i.prevPrice > i.lowestPrice;
   }).length;
   const withTargetCount = items.filter(i => i.target_price).length;
   const atTargetCount = items.filter(i =>
@@ -404,8 +444,16 @@ function renderStatsBar() {
       value: String(dropCount),
       fs: '28px',
       label: 'Price Drops',
-      sub: 'since last check',
+      sub: '5%+ below their peak',
       color: 'var(--success)',
+    },
+    {
+      icon: '⭐',
+      value: String(newLowCount),
+      fs: '28px',
+      label: 'New All-Time Low',
+      sub: 'just hit lowest ever',
+      color: 'var(--prime)',
     },
     {
       icon: '🎯',
@@ -440,7 +488,7 @@ function renderStatsBar() {
 // ── Render: Group bar + grouped grid ──────────────────────────────────────────
 function renderGroupBar() {
   const opts = [
-    ['none','None'],['date','Date Added'],['status','Status'],['sale','Sale'],
+    ['none','None'],['category','Category'],['status','Status'],['sale','Sale'],
   ];
   return `<div style="display:flex;align-items:center;gap:6px;margin-bottom:14px;flex-wrap:wrap">
     <span style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Group:</span>
@@ -456,8 +504,8 @@ function renderGroupedItems(sorted) {
   const order = [];
   sorted.forEach(function(item) {
     var key;
-    if (state.groupBy === 'date') {
-      key = getDateGroup(item.created_at);
+    if (state.groupBy === 'category') {
+      key = detectCategory(item.name);
     } else if (state.groupBy === 'status') {
       if (!item.active) key = 'Paused';
       else if (!item.latest) key = 'Not Checked Yet';
@@ -480,6 +528,95 @@ function renderGroupedItems(sorted) {
   }).join('');
 }
 
+// ── Render: Purchased Items View ───────────────────────────────────────────────
+function renderPurchasedView() {
+  const items = state.purchasedItems || [];
+  if (items.length === 0) {
+    return '<div class="empty" style="padding:64px 24px">' +
+      '<div class="empty-icon">🛍️</div>' +
+      '<h2>No purchased items yet</h2>' +
+      '<p>Use the <strong>Bought</strong> button on any tracked item to record your purchase and move it here.</p>' +
+      '</div>';
+  }
+  const totalSpent = items.reduce(function(s, i) { return s + (i.purchased_price || 0); }, 0);
+  const totalSaved = items.reduce(function(s, i) {
+    return s + (i.highest_price ? Math.max(0, i.highest_price - (i.purchased_price || 0)) : 0);
+  }, 0);
+  const avgSavePct = totalSpent > 0 ? (totalSaved / (totalSpent + totalSaved) * 100) : 0;
+
+  const summary =
+    '<div class="stats-bar" style="margin-bottom:24px">' +
+      '<div class="stat-tile" style="border-top:3px solid var(--accent)">' +
+        '<div class="stat-tile-icon">🛍️</div>' +
+        '<div class="stat-tile-value" style="font-size:28px;color:var(--accent)">' + items.length + '</div>' +
+        '<div class="stat-tile-label">Items Bought</div>' +
+        '<div class="stat-tile-sub">moved from tracking</div>' +
+      '</div>' +
+      '<div class="stat-tile" style="border-top:3px solid var(--muted)">' +
+        '<div class="stat-tile-icon">💸</div>' +
+        '<div class="stat-tile-value" style="font-size:18px;color:var(--text)">SAR ' + fmtPrice(totalSpent) + '</div>' +
+        '<div class="stat-tile-label">Total Spent</div>' +
+        '<div class="stat-tile-sub">across all purchases</div>' +
+      '</div>' +
+      '<div class="stat-tile" style="border-top:3px solid var(--success)">' +
+        '<div class="stat-tile-icon">🎉</div>' +
+        '<div class="stat-tile-value" style="font-size:18px;color:var(--success)">SAR ' + fmtPrice(totalSaved) + '</div>' +
+        '<div class="stat-tile-label">Total Saved</div>' +
+        '<div class="stat-tile-sub">vs peak price · ' + avgSavePct.toFixed(1) + '% avg</div>' +
+      '</div>' +
+    '</div>';
+
+  const cards = items.map(function(item) {
+    const cur = item.currency || 'SAR';
+    const savings = item.highest_price ? Math.max(0, item.highest_price - (item.purchased_price || 0)) : 0;
+    const savingsPct = (item.highest_price && item.highest_price > 0) ? (savings / item.highest_price * 100) : 0;
+    const imgHtml = item.image_url
+      ? '<img style="width:70px;height:70px;border-radius:8px;object-fit:contain;background:var(--surface2);flex-shrink:0" src="' + escHtml(item.image_url) + '" alt="" loading="lazy" onerror="this.style.display=\'none\'">'
+      : '<div style="width:70px;height:70px;border-radius:8px;background:var(--surface2);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:26px">📦</div>';
+    return '<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:12px">' +
+      '<div style="display:flex;gap:12px;align-items:flex-start">' +
+        imgHtml +
+        '<div style="flex:1;min-width:0">' +
+          '<div style="font-weight:600;font-size:14px;line-height:1.3;margin-bottom:4px">' + escHtml(item.name) + '</div>' +
+          '<div style="font-size:12px;color:var(--muted)">Purchased ' + fmtDate(item.purchased_at) + '</div>' +
+          (item.notes ? '<div style="font-size:12px;color:var(--muted);font-style:italic;margin-top:2px">' + escHtml(item.notes) + '</div>' : '') +
+        '</div>' +
+        '<div style="display:flex;gap:6px;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end">' +
+          '<a href="' + escHtml(item.url) + '" target="_blank" rel="noopener" class="btn btn-ghost btn-sm" style="text-decoration:none">🔗 Amazon</a>' +
+          '<button class="btn btn-ghost btn-sm" data-action="restore-item" data-id="' + item.id + '">↩ Restore</button>' +
+        '</div>' +
+      '</div>' +
+      '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding-top:12px;border-top:1px solid var(--border)">' +
+        '<div><div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Paid</div>' +
+          '<div style="font-size:18px;font-weight:700">' + cur + ' ' + fmtPrice(item.purchased_price) + '</div></div>' +
+        '<div><div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Peak Price</div>' +
+          (item.highest_price
+            ? '<div style="font-size:15px;color:var(--muted);text-decoration:line-through">' + cur + ' ' + fmtPrice(item.highest_price) + '</div>'
+            : '<div style="font-size:13px;color:var(--muted)">—</div>') +
+        '</div>' +
+        '<div><div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Saved</div>' +
+          (savings > 0
+            ? '<div style="font-size:17px;font-weight:700;color:var(--success)">' + cur + ' ' + fmtPrice(savings) +
+              ' <span style="font-size:11px;background:var(--success)22;padding:2px 6px;border-radius:20px">' + savingsPct.toFixed(1) + '%</span></div>'
+            : '<div style="font-size:13px;color:var(--muted)">—</div>') +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+
+  return summary + '<div style="display:flex;flex-direction:column;gap:12px">' + cards + '</div>';
+}
+
+async function loadPurchasedItems() {
+  try {
+    state.purchasedItems = await api('GET', '/api/purchased-items');
+    renderDashboard();
+  } catch (e) {
+    const main = document.querySelector('#app-inner main');
+    if (main) main.innerHTML = '<div class="alert alert-error">' + escHtml(e.message) + '</div>';
+  }
+}
+
 // ── Render: Dashboard ──────────────────────────────────────────────────────────
 function renderDashboard() {
   const items = state.items;
@@ -488,14 +625,20 @@ function renderDashboard() {
     <div id="app-inner">
       <header>
         <h1><span>🏷️</span> Price Tracker</h1>
+        <div class="view-tabs">
+          <button class="view-tab ${state.view === 'main' ? 'active' : ''}" data-action="switch-view" data-view="main">📦 Tracking</button>
+          <button class="view-tab ${state.view === 'purchased' ? 'active' : ''}" data-action="switch-view" data-view="purchased">🛍️ Purchased</button>
+        </div>
         <button class="btn btn-ghost btn-sm" data-action="open-notifications" title="Notifications">🔔</button>
-        <button class="btn btn-ghost btn-sm" data-action="open-purchases" title="My Savings">💰</button>
         <button class="btn btn-ghost btn-sm" data-action="open-settings" title="Settings">⚙️</button>
-        <button class="btn btn-primary btn-sm" data-action="open-add-item">+ Add Item</button>
+        ${state.view === 'main' ? '<button class="btn btn-primary btn-sm" data-action="open-add-item">+ Add Item</button>' : ''}
         <button class="btn-icon" data-action="logout" title="Logout" style="color:var(--muted);font-size:16px">⏏</button>
       </header>
       <main>
-        ${items.length === 0 ? renderEmpty() : `${renderStatsBar()}${renderSortBar()}${renderGroupBar()}${renderGroupedItems(sorted)}`}
+        ${state.view === 'purchased'
+          ? (state.purchasedItems === null ? '<div class="loading"><div class="spinner"></div> Loading...</div>' : renderPurchasedView())
+          : (items.length === 0 ? renderEmpty() : `${renderStatsBar()}${renderSortBar()}${renderGroupBar()}${renderGroupedItems(sorted)}`)
+        }
       </main>
     </div>`;
 }
@@ -590,9 +733,31 @@ function renderCard(item) {
     : '';
   const placeholderStyle = item.image_url ? 'display:none' : '';
 
+  const hasOtherSellers = !inStock && p && p.has_other_sellers;
+  const otherSellersPrice = p ? p.other_sellers_price : null;
+  // override stockBadge to handle other sellers case
+  const stockBadgeFinal = hasError ? stockBadge
+    : (inStock ? stockBadge
+        : (hasOtherSellers
+            ? '<span class="badge badge-third">&#x1F3EA; Other sellers available</span>'
+            : stockBadge));
+
+  // Card highlight logic
+  const isNewLow = currentPrice != null && item.lowestPrice != null &&
+    currentPrice <= item.lowestPrice && item.prevPrice != null && item.prevPrice > item.lowestPrice;
+  const isOnSaleHistory = item.highestPrice && currentPrice != null &&
+    item.highestPrice > 0 && (item.highestPrice - currentPrice) / item.highestPrice >= 0.05;
+  const isOnSaleNow = p && !p.error && p.original_price && currentPrice && p.original_price > currentPrice;
+  const highlightClass = isNewLow ? ' highlight-low' : (isOnSaleNow ? ' highlight-sale' : (isOnSaleHistory ? ' highlight-drop' : ''));
+  const highlightBadge = isNewLow
+    ? '<span class="badge" style="background:var(--prime)22;color:var(--prime)">New Low</span>'
+    : (isOnSaleHistory && !isOnSaleNow
+        ? '<span class="badge" style="background:var(--success)22;color:var(--success)">-' + Math.round((item.highestPrice - currentPrice) / item.highestPrice * 100) + '% from peak</span>'
+        : '');
+
   const isChecking = state.checking.has(item.id);
 
-  return `<div class="card${item.active ? '' : ' inactive'}" data-id="${item.id}">
+  return `<div class="card${item.active ? '' : ' inactive'}${highlightClass}" data-id="${item.id}">
     <div class="card-top">
       ${imageHtml}
       <div class="card-img-placeholder" style="${placeholderStyle}">📦</div>
@@ -616,8 +781,12 @@ function renderCard(item) {
       : ''
     }
 
+    ${hasOtherSellers && otherSellersPrice != null
+      ? `<div style="font-size:12px;color:var(--muted);padding:2px 14px 0">Other sellers from <strong style="color:var(--warning)">${cur} ${fmtPrice(otherSellersPrice)}</strong></div>`
+      : ''
+    }
     <div class="card-badges">
-      ${sellerBadge}${primeBadge}${stockBadge}${inactiveBadge}${targetBadge}
+      ${sellerBadge}${primeBadge}${stockBadgeFinal}${inactiveBadge}${targetBadge}${highlightBadge}
     </div>
 
     <div class="card-stats">
@@ -1162,7 +1331,18 @@ document.addEventListener('click', async e => {
     return;
   }
 
-  // ── Sort / Group ──
+  // ── View / Sort / Group ──
+  if (action === 'switch-view') {
+    state.view = el.dataset.view;
+    if (state.view === 'purchased') {
+      state.purchasedItems = null;
+      renderDashboard();
+      await loadPurchasedItems();
+    } else {
+      renderDashboard();
+    }
+    return;
+  }
   if (action === 'sort') { state.sort = el.dataset.sort; renderDashboard(); return; }
   if (action === 'group') { state.groupBy = el.dataset.group; renderDashboard(); return; }
 
@@ -1246,8 +1426,6 @@ document.addEventListener('click', async e => {
   }
 
   // ── Purchases / Savings ──
-  if (action === 'open-purchases') { await openPurchasesSheet(); return; }
-
   if (action === 'mark-bought') {
     const item = state.items.find(i => i.id === id);
     if (item) openMarkBoughtSheet(item);
@@ -1265,6 +1443,11 @@ document.addEventListener('click', async e => {
     try {
       await api('POST', `/api/items/${id}/purchases`, { purchased_price: parseFloat(price), purchased_at: date || undefined, notes: notes || undefined });
       closeSheet();
+      await loadItems();
+      state.purchasedItems = null;
+      state.view = 'purchased';
+      renderDashboard();
+      await loadPurchasedItems();
     } catch (err) {
       setMsg('buy-msg', escHtml(err.message));
       btn.disabled = false;
@@ -1278,6 +1461,17 @@ document.addEventListener('click', async e => {
     try {
       await api('DELETE', `/api/purchases/${id}`);
       await openPurchasesSheet();
+    } catch (err) {
+      alert('Failed: ' + err.message);
+    }
+    return;
+  }
+
+  if (action === 'restore-item') {
+    if (!confirm('Move this item back to your tracking list?')) return;
+    try {
+      await api('PUT', `/api/purchased-items/${id}/restore`);
+      await Promise.all([loadItems(), loadPurchasedItems()]);
     } catch (err) {
       alert('Failed: ' + err.message);
     }

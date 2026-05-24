@@ -77,7 +77,7 @@ app.post('/api/auth/logout', (req, res) => {
 // ── Items ─────────────────────────────────────────────────────────────────────
 
 app.get('/api/items', requireAuth, (req, res) => {
-  const items = db.prepare('SELECT * FROM items WHERE user_id = ? ORDER BY created_at DESC').all(req.user.id);
+  const items = db.prepare('SELECT * FROM items WHERE user_id = ? AND is_purchased = 0 ORDER BY created_at DESC').all(req.user.id);
   const result = items.map(item => {
     const latest = db.prepare(
       'SELECT * FROM price_history WHERE item_id = ? AND error IS NULL ORDER BY checked_at DESC LIMIT 1'
@@ -142,13 +142,14 @@ app.post('/api/items', requireAuth, async (req, res) => {
 
   if (scraped) {
     db.prepare(`
-      INSERT INTO price_history (item_id, price, original_price, currency, seller_name, is_amazon_direct, is_prime, in_stock)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO price_history (item_id, price, original_price, currency, seller_name, is_amazon_direct, is_prime, in_stock, has_other_sellers, other_sellers_price)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       lastInsertRowid,
       scraped.price, scraped.originalPrice, scraped.currency || 'SAR',
       scraped.sellerName, scraped.isAmazonDirect ? 1 : 0,
-      scraped.isPrime ? 1 : 0, scraped.inStock ? 1 : 0
+      scraped.isPrime ? 1 : 0, scraped.inStock ? 1 : 0,
+      scraped.hasOtherSellers ? 1 : 0, scraped.otherSellersPrice || null
     );
     db.prepare("UPDATE items SET last_checked_at = datetime('now') WHERE id = ?").run(lastInsertRowid);
   }
@@ -263,6 +264,33 @@ app.get('/api/notifications', requireAuth, (req, res) => {
   res.json(rows);
 });
 
+// ── Purchased Items ───────────────────────────────────────────────────────────
+
+app.get('/api/purchased-items', requireAuth, (req, res) => {
+  const items = db.prepare('SELECT * FROM items WHERE user_id = ? AND is_purchased = 1 ORDER BY created_at DESC').all(req.user.id);
+  const result = items.map(item => {
+    const purchase = db.prepare('SELECT * FROM purchases WHERE item_id = ? ORDER BY purchased_at DESC LIMIT 1').get(item.id);
+    const stats = db.prepare('SELECT MIN(price) as lowest, MAX(price) as highest FROM price_history WHERE item_id = ? AND price IS NOT NULL AND error IS NULL').get(item.id);
+    return {
+      ...item,
+      purchased_price: purchase?.purchased_price ?? null,
+      currency: purchase?.currency ?? 'SAR',
+      purchased_at: purchase?.purchased_at ?? null,
+      notes: purchase?.notes ?? null,
+      highest_price: stats?.highest ?? null,
+      lowest_price: stats?.lowest ?? null,
+    };
+  });
+  res.json(result);
+});
+
+app.put('/api/purchased-items/:id/restore', requireAuth, (req, res) => {
+  const item = db.prepare('SELECT * FROM items WHERE id = ? AND user_id = ? AND is_purchased = 1').get(req.params.id, req.user.id);
+  if (!item) return res.status(404).json({ error: 'Not found' });
+  db.prepare('UPDATE items SET is_purchased = 0 WHERE id = ?').run(item.id);
+  res.json({ ok: true });
+});
+
 // ── Purchases ─────────────────────────────────────────────────────────────────
 
 app.get('/api/purchases', requireAuth, (req, res) => {
@@ -289,6 +317,7 @@ app.post('/api/items/:id/purchases', requireAuth, (req, res) => {
     INSERT INTO purchases (item_id, purchased_price, currency, purchased_at, notes)
     VALUES (?, ?, ?, COALESCE(?, datetime('now')), ?)
   `).run(item.id, parseFloat(purchased_price), currency || 'SAR', purchased_at || null, notes || null);
+  db.prepare('UPDATE items SET is_purchased = 1 WHERE id = ?').run(item.id);
   res.json(db.prepare('SELECT * FROM purchases WHERE id = ?').get(lastInsertRowid));
 });
 

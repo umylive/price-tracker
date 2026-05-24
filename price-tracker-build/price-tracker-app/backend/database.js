@@ -93,10 +93,19 @@ insertSetting.run('check_interval', '60');
 insertSetting.run('notify_price_drop', '1');
 insertSetting.run('notify_back_in_stock', '1');
 
-// Add currency column to notifications if it doesn't exist (migration)
+// Migrations
 const hasCurrencyCol = db.prepare("PRAGMA table_info(notifications)").all().some(c => c.name === 'currency');
 if (!hasCurrencyCol) {
   db.exec("ALTER TABLE notifications ADD COLUMN currency TEXT DEFAULT 'SAR'");
+}
+const hasPurchasedCol = db.prepare("PRAGMA table_info(items)").all().some(c => c.name === 'is_purchased');
+if (!hasPurchasedCol) {
+  db.exec("ALTER TABLE items ADD COLUMN is_purchased INTEGER NOT NULL DEFAULT 0");
+}
+const hasOtherSellersCol = db.prepare("PRAGMA table_info(price_history)").all().some(c => c.name === 'has_other_sellers');
+if (!hasOtherSellersCol) {
+  db.exec("ALTER TABLE price_history ADD COLUMN has_other_sellers INTEGER DEFAULT 0");
+  db.exec("ALTER TABLE price_history ADD COLUMN other_sellers_price REAL");
 }
 
 function cleanupSessions() {

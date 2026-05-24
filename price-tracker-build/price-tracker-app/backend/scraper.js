@@ -67,6 +67,8 @@ function parseJsonLd($) {
         isPrime: false,
         inStock: offer?.availability ? offer.availability.toLowerCase().includes('instock') : true,
         imageUrl: Array.isArray(product.image) ? product.image[0] : (product.image || null),
+        hasOtherSellers: false,
+        otherSellersPrice: null,
       };
     } catch (_) {}
   });
@@ -137,6 +139,18 @@ function parseCssSelectors($) {
     $('#imgBlkFront').attr('src') ||
     $('#main-image').attr('src') || null;
 
+  // Detect other sellers when main listing is out of stock
+  let hasOtherSellers = false;
+  let otherSellersPrice = null;
+  if (!inStock) {
+    const olpText = $('#olp_feature_div').text() + ' ' + $('#mbc-main').text() + ' ' + $('#moreBuyingChoices_feature_div').text();
+    const priceMatch = olpText.match(/SAR\s*([\d,]+\.?\d*)/i);
+    if (priceMatch) {
+      otherSellersPrice = parsePrice(priceMatch[1]);
+      hasOtherSellers = !!otherSellersPrice;
+    }
+  }
+
   return {
     title,
     price,
@@ -147,6 +161,8 @@ function parseCssSelectors($) {
     isPrime,
     inStock,
     imageUrl,
+    hasOtherSellers,
+    otherSellersPrice,
   };
 }
 

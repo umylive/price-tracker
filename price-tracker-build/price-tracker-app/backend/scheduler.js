@@ -47,8 +47,8 @@ async function checkItem(item) {
   ).get(item.id);
 
   db.prepare(`
-    INSERT INTO price_history (item_id, price, original_price, currency, seller_name, is_amazon_direct, is_prime, in_stock)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO price_history (item_id, price, original_price, currency, seller_name, is_amazon_direct, is_prime, in_stock, has_other_sellers, other_sellers_price)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     item.id,
     scraped.price,
@@ -57,7 +57,9 @@ async function checkItem(item) {
     scraped.sellerName,
     scraped.isAmazonDirect ? 1 : 0,
     scraped.isPrime ? 1 : 0,
-    scraped.inStock ? 1 : 0
+    scraped.inStock ? 1 : 0,
+    scraped.hasOtherSellers ? 1 : 0,
+    scraped.otherSellersPrice || null
   );
 
   if (scraped.imageUrl && !item.image_url) {
