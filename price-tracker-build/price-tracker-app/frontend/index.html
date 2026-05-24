@@ -700,15 +700,14 @@ function renderCard(item) {
   const p = item.latest;
   const currentPrice = p?.price ?? null;
   const cur = itemCurrency(item);
-  const diff = priceDiff(currentPrice, item.prevPrice);
+  const diffFromPrev = priceDiff(currentPrice, item.prevPrice);
+  const diffFromPeak = priceDiff(currentPrice, item.highestPrice);
   const inStock = p?.in_stock ?? true;
   const hasError = p?.error;
 
   let changeHtml = '';
-  if (diff != null) {
-    const cls = diff < -0.1 ? 'down' : diff > 0.1 ? 'up' : 'flat';
-    const sym = diff < -0.1 ? '↓' : diff > 0.1 ? '↑' : '→';
-    changeHtml = `<span class="card-change ${cls}">${sym} ${Math.abs(diff).toFixed(1)}%</span>`;
+  if (diffFromPeak != null && diffFromPeak < -0.1) {
+    changeHtml = `<span class="card-change down">&#x2193; ${Math.abs(diffFromPeak).toFixed(1)}% from peak</span>`;
   }
 
   const sellerBadge = p && !p.error
@@ -771,7 +770,7 @@ function renderCard(item) {
       ${currentPrice != null
         ? `<div class="card-price"><span class="card-currency">${cur}</span>${fmtPrice(currentPrice)}</div>
            ${changeHtml}
-           ${item.prevPrice && diff !== null && item.prevPrice !== currentPrice
+           ${item.prevPrice && diffFromPrev !== null && item.prevPrice !== currentPrice
              ? `<span class="card-was">${cur} ${fmtPrice(item.prevPrice)}</span>` : ''}`
         : `<div style="color:var(--muted);font-size:14px">${hasError ? 'Check failed' : 'Not yet checked'}</div>`
       }
