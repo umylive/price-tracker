@@ -712,8 +712,8 @@ function renderCard(item) {
 
   const sellerBadge = p && !p.error
     ? (p.is_amazon_direct
-        ? `<span class="badge badge-amazon">✅ Amazon SA</span>`
-        : `<span class="badge badge-third">🏪 ${escHtml(p.seller_name || 'Seller')}</span>`)
+        ? `<span class="badge badge-amazon">&#x2705; Amazon SA</span>`
+        : (p.seller_name ? `<span class="badge badge-third">&#x1F3EA; ${escHtml(p.seller_name)}</span>` : ''))
     : '';
 
   const stockBadge = hasError

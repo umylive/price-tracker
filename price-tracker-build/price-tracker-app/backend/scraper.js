@@ -203,7 +203,21 @@ async function scrapeAmazonSA(url) {
       }
 
       let result = parseJsonLd($);
-      if (!result || !result.title) result = parseCssSelectors($);
+      if (!result || !result.title) {
+        result = parseCssSelectors($);
+      } else if (!result.sellerName) {
+        // JSON-LD had title/price but no seller — supplement from CSS selectors
+        const css = parseCssSelectors($);
+        if (css) {
+          result.sellerName = css.sellerName;
+          result.isAmazonDirect = css.isAmazonDirect;
+          result.isPrime = result.isPrime || css.isPrime;
+          if (result.inStock == null) result.inStock = css.inStock;
+          if (result.imageUrl == null) result.imageUrl = css.imageUrl;
+          result.hasOtherSellers = css.hasOtherSellers;
+          result.otherSellersPrice = css.otherSellersPrice;
+        }
+      }
       if (!result || !result.title) throw new Error('Could not parse product data from page');
 
       return result;
