@@ -712,7 +712,7 @@ function renderCard(item) {
 
   const sellerBadge = p && !p.error
     ? (p.is_amazon_direct
-        ? `<span class="badge badge-amazon">&#x2705; Amazon SA</span>`
+        ? `<span class="badge badge-amazon">&#x2705; ${escHtml(p.seller_name || 'Amazon SA')}</span>`
         : (p.seller_name ? `<span class="badge badge-third">&#x1F3EA; ${escHtml(p.seller_name)}</span>` : ''))
     : '';
 
