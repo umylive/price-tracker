@@ -705,9 +705,15 @@ function renderCard(item) {
   const inStock = p?.in_stock ?? true;
   const hasError = p?.error;
 
+  const discountFromList = p && !p.error && p.original_price && currentPrice && p.original_price > currentPrice
+    ? Math.round((p.original_price - currentPrice) / p.original_price * 100)
+    : null;
+
   let changeHtml = '';
-  if (diffFromPeak != null && diffFromPeak < -0.1) {
-    changeHtml = `<span class="card-change down">&#x2193; ${Math.abs(diffFromPeak).toFixed(1)}% from peak</span>`;
+  if (discountFromList != null) {
+    changeHtml = '<span class="card-change down">-' + discountFromList + '% off</span>';
+  } else if (diffFromPeak != null && diffFromPeak < -0.1) {
+    changeHtml = '<span class="card-change down">&#x2193; ' + Math.abs(diffFromPeak).toFixed(1) + '% from peak</span>';
   }
 
   const sellerBadge = p && !p.error
@@ -770,13 +776,17 @@ function renderCard(item) {
       ${currentPrice != null
         ? `<div class="card-price"><span class="card-currency">${cur}</span>${fmtPrice(currentPrice)}</div>
            ${changeHtml}
-           ${item.prevPrice && diffFromPrev !== null && item.prevPrice !== currentPrice
+           ${discountFromList == null && item.prevPrice && diffFromPrev !== null && item.prevPrice !== currentPrice
              ? `<span class="card-was">${cur} ${fmtPrice(item.prevPrice)}</span>` : ''}`
         : `<div style="color:var(--muted);font-size:14px">${hasError ? 'Check failed' : 'Not yet checked'}</div>`
       }
     </div>
+    ${discountFromList != null
+      ? `<div style="font-size:12px;color:var(--muted);padding:2px 14px 0">List: <span style="text-decoration:line-through">${cur} ${fmtPrice(p.original_price)}</span></div>`
+      : ''
+    }
     ${cur === 'USD' && currentPrice != null
-      ? `<div style="font-size:12px;color:var(--muted);padding:2px 14px 0">≈ SAR ${fmtPrice(currentPrice * USD_TO_SAR)}</div>`
+      ? `<div style="font-size:12px;color:var(--muted);padding:2px 14px 0">&#x2248; SAR ${fmtPrice(currentPrice * USD_TO_SAR)}</div>`
       : ''
     }
 
