@@ -110,15 +110,22 @@ function parseCssSelectors($) {
   const merchantText = (
     $('#merchant-info').text() + ' ' +
     $('#tabular-buybox').text() + ' ' +
-    $('#buybox').text()
+    $('#buybox').text() + ' ' +
+    $('#shipsFromSoldBy_feature_div').text() + ' ' +
+    $('#sellerProfileTriggerId').text()
   ).toLowerCase();
-  const sellerEl = $('#sellerProfileTriggerId').first().text().trim() ||
-                   $('#tabular-buybox-truncate-0 .tabular-buybox-text').first().text().trim();
+  const sellerEl =
+    $('#sellerProfileTriggerId').first().text().trim() ||
+    $('#tabular-buybox-truncate-0 .tabular-buybox-text').first().text().trim() ||
+    $('#merchant-info a').first().text().trim() ||
+    $('#tabular-buybox-container .tabular-buybox-text').first().text().trim();
   const sellerName = sellerEl || null;
   const isAmazonDirect =
-    /ships from and sold by amazon/i.test(merchantText) ||
-    /sold by amazon\.sa/i.test(merchantText) ||
-    /sold by: amazon\.sa/i.test(merchantText) ||
+    /ships from.*sold by amazon/i.test(merchantText) ||
+    /dispatched.*sold by amazon/i.test(merchantText) ||
+    /sold by.*amazon\.sa/i.test(merchantText) ||
+    /fulfilled by amazon/i.test(merchantText) ||
+    /\bamazon\.sa\b/i.test(merchantText) ||
     (sellerName && /^amazon/i.test(sellerName));
 
   const isPrime =
