@@ -407,6 +407,15 @@ async function scrapeIkea(url) {
 
       if (!result || !result.title) throw new Error('Could not parse IKEA product data — page may be JS-rendered or blocked');
 
+      // Always try og:image as fallback — parseIkeaNextData may return null imageUrl
+      if (!result.imageUrl) {
+        result.imageUrl =
+          $('meta[property="og:image"]').attr('content') ||
+          $('img[class*="pip-media-grid__image"]').first().attr('src') ||
+          $('img[class*="pip-aspect-ratio-image__image"]').first().attr('src') ||
+          $('[class*="pip-media-grid"] img').first().attr('src') || null;
+      }
+
       // Ensure all price fields are safe numbers (no NaN/Infinity)
       result.price = Number.isFinite(result.price) && result.price > 0 ? result.price : null;
       result.originalPrice = Number.isFinite(result.originalPrice) && result.originalPrice > 0 ? result.originalPrice : null;

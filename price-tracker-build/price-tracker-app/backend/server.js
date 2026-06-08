@@ -112,8 +112,16 @@ app.post('/api/items', requireAuth, async (req, res) => {
     if (!normalized) return res.status(400).json({ error: 'Could not parse a valid Amazon SA URL/ASIN or IKEA SA URL' });
     const { url, asin, store } = normalized;
 
-    const existing = db.prepare('SELECT id FROM items WHERE user_id = ? AND url = ?').get(req.user.id, url);
-    if (existing) return res.status(400).json({ error: 'This item is already being tracked' });
+    const existing = db.prepare('SELECT id, is_purchased FROM items WHERE user_id = ? AND url = ?').get(req.user.id, url);
+    if (existing) {
+      if (existing.is_purchased) {
+        // Restore purchased item back to active tracking
+        db.prepare("UPDATE items SET is_purchased = 0, active = 1 WHERE id = ?").run(existing.id);
+        const restored = db.prepare('SELECT * FROM items WHERE id = ?').get(existing.id);
+        return res.json(restored);
+      }
+      return res.status(400).json({ error: 'This item is already being tracked' });
+    }
 
     let finalName = name?.trim() || null;
     let imageUrl = null;
