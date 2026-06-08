@@ -112,8 +112,8 @@ app.post('/api/items', requireAuth, async (req, res) => {
     if (!normalized) return res.status(400).json({ error: 'Could not parse a valid Amazon SA URL/ASIN or IKEA SA URL' });
     const { url, asin, store } = normalized;
 
-    const existing = db.prepare('SELECT id FROM items WHERE user_id = ? AND url = ? AND is_purchased = 0').get(req.user.id, url);
-    if (existing) return res.status(400).json({ error: 'This item is already being tracked' });
+    const activeExisting = db.prepare('SELECT id FROM items WHERE user_id = ? AND url = ? AND is_purchased = 0').get(req.user.id, url);
+    if (activeExisting) return res.status(400).json({ error: 'This item is already being tracked' });
 
     let finalName = name?.trim() || null;
     let imageUrl = null;
@@ -133,6 +133,36 @@ app.post('/api/items', requireAuth, async (req, res) => {
     }
 
     const safeNum = v => { const n = parseFloat(v); return Number.isFinite(n) ? n : null; };
+
+    // If the item exists as a purchased item, restore it to tracking and add fresh price row
+    const purchasedExisting = db.prepare('SELECT * FROM items WHERE user_id = ? AND url = ? AND is_purchased = 1').get(req.user.id, url);
+    if (purchasedExisting) {
+      db.prepare("UPDATE items SET is_purchased = 0, active = 1 WHERE id = ?").run(purchasedExisting.id);
+      if (scraped) {
+        const phRow = {
+          item_id: purchasedExisting.id,
+          price: safeNum(scraped.price),
+          original_price: safeNum(scraped.originalPrice),
+          currency: scraped.currency || 'SAR',
+          seller_name: scraped.sellerName || null,
+          is_amazon_direct: scraped.isAmazonDirect ? 1 : 0,
+          is_prime: scraped.isPrime ? 1 : 0,
+          in_stock: scraped.inStock ? 1 : 0,
+          has_other_sellers: scraped.hasOtherSellers ? 1 : 0,
+          other_sellers_price: safeNum(scraped.otherSellersPrice),
+        };
+        db.prepare(
+          'INSERT INTO price_history (item_id, price, original_price, currency, seller_name, is_amazon_direct, is_prime, in_stock, has_other_sellers, other_sellers_price) VALUES (@item_id, @price, @original_price, @currency, @seller_name, @is_amazon_direct, @is_prime, @in_stock, @has_other_sellers, @other_sellers_price)'
+        ).run(phRow);
+        if (imageUrl && !purchasedExisting.image_url) {
+          db.prepare('UPDATE items SET image_url = ? WHERE id = ?').run(imageUrl, purchasedExisting.id);
+        }
+        db.prepare("UPDATE items SET last_checked_at = datetime('now') WHERE id = ?").run(purchasedExisting.id);
+      }
+      console.log('[add-item] restored purchased item id:', purchasedExisting.id);
+      return res.json(db.prepare('SELECT * FROM items WHERE id = ?').get(purchasedExisting.id));
+    }
+
     const itemRow = {
       user_id: req.user.id,
       name: finalName,
@@ -284,7 +314,13 @@ app.get('/api/notifications', requireAuth, (req, res) => {
 // ── Purchased Items ───────────────────────────────────────────────────────────
 
 app.get('/api/purchased-items', requireAuth, (req, res) => {
-  const items = db.prepare('SELECT * FROM items WHERE user_id = ? AND is_purchased = 1 ORDER BY created_at DESC').all(req.user.id);
+  // Show any item that has a purchase record, regardless of is_purchased status
+  const items = db.prepare(`
+    SELECT DISTINCT items.* FROM items
+    INNER JOIN purchases ON purchases.item_id = items.id
+    WHERE items.user_id = ?
+    ORDER BY items.created_at DESC
+  `).all(req.user.id);
   const result = items.map(item => {
     const purchase = db.prepare('SELECT * FROM purchases WHERE item_id = ? ORDER BY purchased_at DESC LIMIT 1').get(item.id);
     const stats = db.prepare('SELECT MIN(price) as lowest, MAX(price) as highest FROM price_history WHERE item_id = ? AND price IS NOT NULL AND error IS NULL').get(item.id);
@@ -302,9 +338,9 @@ app.get('/api/purchased-items', requireAuth, (req, res) => {
 });
 
 app.put('/api/purchased-items/:id/restore', requireAuth, (req, res) => {
-  const item = db.prepare('SELECT * FROM items WHERE id = ? AND user_id = ? AND is_purchased = 1').get(req.params.id, req.user.id);
+  const item = db.prepare('SELECT * FROM items WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
   if (!item) return res.status(404).json({ error: 'Not found' });
-  db.prepare('UPDATE items SET is_purchased = 0 WHERE id = ?').run(item.id);
+  db.prepare('UPDATE items SET is_purchased = 0, active = 1 WHERE id = ?').run(item.id);
   res.json({ ok: true });
 });
 
