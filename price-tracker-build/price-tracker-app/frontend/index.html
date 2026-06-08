@@ -619,6 +619,7 @@ function renderPurchasedView() {
         '<div style="display:flex;gap:6px;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end;align-items:flex-start">' +
           '<a href="' + escHtml(item.url) + '" target="_blank" rel="noopener" class="btn btn-ghost btn-sm" style="text-decoration:none">&#x1F517;</a>' +
           '<button class="btn btn-primary btn-sm" data-action="restore-item" data-id="' + item.id + '">&#x21A9; Restore</button>' +
+          '<button class="btn btn-danger btn-sm" data-action="delete-purchased-item" data-id="' + item.id + '">&#x1F5D1;</button>' +
         '</div>' +
       '</div>' +
       '<div style="display:flex;gap:16px;flex-wrap:wrap;padding-top:12px;border-top:1px solid var(--border)">' +
@@ -1633,6 +1634,18 @@ document.addEventListener('click', async e => {
     try {
       await api('PUT', `/api/purchased-items/${id}/restore`);
       await Promise.all([loadItems(), loadPurchasedItems()]);
+    } catch (err) {
+      alert('Failed: ' + err.message);
+    }
+    return;
+  }
+
+  if (action === 'delete-purchased-item') {
+    if (!confirm('Delete this item and all its price history? This cannot be undone.')) return;
+    try {
+      await api('DELETE', `/api/items/${id}`);
+      state.purchasedItems = (state.purchasedItems || []).filter(function(i) { return i.id !== id; });
+      renderDashboard();
     } catch (err) {
       alert('Failed: ' + err.message);
     }
