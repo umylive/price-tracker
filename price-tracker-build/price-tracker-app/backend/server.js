@@ -132,25 +132,38 @@ app.post('/api/items', requireAuth, async (req, res) => {
       });
     }
 
-    const safeNum = v => (v != null && Number.isFinite(v) ? v : null);
+    const safeNum = v => { const n = parseFloat(v); return Number.isFinite(n) ? n : null; };
+    const itemRow = {
+      user_id: req.user.id,
+      name: finalName,
+      url: url,
+      asin: asin != null ? String(asin) : null,
+      image_url: imageUrl != null ? String(imageUrl) : null,
+      store: store,
+      target_price: target_price != null ? safeNum(target_price) : null,
+      notify_drop_percent: notify_drop_percent != null ? (safeNum(notify_drop_percent) ?? 5) : 5,
+    };
+    console.log('[add-item] inserting:', JSON.stringify(itemRow));
     const { lastInsertRowid } = db.prepare(
-      'INSERT INTO items (user_id, name, url, asin, image_url, store, target_price, notify_drop_percent) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-    ).run(
-      req.user.id, finalName, url, asin || null, imageUrl || null, store,
-      target_price ? safeNum(parseFloat(target_price)) : null,
-      notify_drop_percent ? safeNum(parseFloat(notify_drop_percent)) ?? 5 : 5
-    );
+      'INSERT INTO items (user_id, name, url, asin, image_url, store, target_price, notify_drop_percent) VALUES (@user_id, @name, @url, @asin, @image_url, @store, @target_price, @notify_drop_percent)'
+    ).run(itemRow);
 
     if (scraped) {
+      const phRow = {
+        item_id: lastInsertRowid,
+        price: safeNum(scraped.price),
+        original_price: safeNum(scraped.originalPrice),
+        currency: scraped.currency || 'SAR',
+        seller_name: scraped.sellerName || null,
+        is_amazon_direct: scraped.isAmazonDirect ? 1 : 0,
+        is_prime: scraped.isPrime ? 1 : 0,
+        in_stock: scraped.inStock ? 1 : 0,
+        has_other_sellers: scraped.hasOtherSellers ? 1 : 0,
+        other_sellers_price: safeNum(scraped.otherSellersPrice),
+      };
       db.prepare(
-        'INSERT INTO price_history (item_id, price, original_price, currency, seller_name, is_amazon_direct, is_prime, in_stock, has_other_sellers, other_sellers_price) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-      ).run(
-        lastInsertRowid,
-        safeNum(scraped.price), safeNum(scraped.originalPrice), scraped.currency || 'SAR',
-        scraped.sellerName || null, scraped.isAmazonDirect ? 1 : 0,
-        scraped.isPrime ? 1 : 0, scraped.inStock ? 1 : 0,
-        scraped.hasOtherSellers ? 1 : 0, safeNum(scraped.otherSellersPrice)
-      );
+        'INSERT INTO price_history (item_id, price, original_price, currency, seller_name, is_amazon_direct, is_prime, in_stock, has_other_sellers, other_sellers_price) VALUES (@item_id, @price, @original_price, @currency, @seller_name, @is_amazon_direct, @is_prime, @in_stock, @has_other_sellers, @other_sellers_price)'
+      ).run(phRow);
       db.prepare("UPDATE items SET last_checked_at = datetime('now') WHERE id = ?").run(lastInsertRowid);
     }
 
