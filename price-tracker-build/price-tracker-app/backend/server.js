@@ -6,7 +6,7 @@ const {
   hashPassword, verifyPassword, createSession, getSession,
   deleteSession, isRateLimited, recordLoginAttempt, requireAuth,
 } = require('./auth');
-const { scrapeAmazonSA, normalizeUrl } = require('./scraper');
+const { scrapeAmazonSA, scrapeIkea, normalizeUrl } = require('./scraper');
 const { startScheduler, restartScheduler, runAllChecks, checkItem, sendTelegram } = require('./scheduler');
 
 const getSetting = k => db.prepare('SELECT value FROM settings WHERE key = ?').get(k)?.value || '';
@@ -108,7 +108,7 @@ app.post('/api/items', requireAuth, async (req, res) => {
   if (!input?.trim()) return res.status(400).json({ error: 'Product URL or ASIN is required' });
 
   const normalized = normalizeUrl(input.trim());
-  if (!normalized) return res.status(400).json({ error: 'Could not parse a valid Amazon SA URL or ASIN' });
+  if (!normalized) return res.status(400).json({ error: 'Could not parse a valid Amazon SA URL/ASIN or IKEA SA URL' });
   const { url, asin, store } = normalized;
 
   const existing = db.prepare('SELECT id FROM items WHERE user_id = ? AND url = ?').get(req.user.id, url);
@@ -118,7 +118,7 @@ app.post('/api/items', requireAuth, async (req, res) => {
   let imageUrl = null;
   let scraped = null;
   try {
-    scraped = await scrapeAmazonSA(url);
+    scraped = store === 'ikea_sa' ? await scrapeIkea(url) : await scrapeAmazonSA(url);
     if (!finalName && scraped.title) finalName = scraped.title;
     imageUrl = scraped.imageUrl || null;
   } catch (e) {
@@ -127,7 +127,7 @@ app.post('/api/items', requireAuth, async (req, res) => {
 
   if (!finalName) {
     return res.status(400).json({
-      error: 'Could not auto-detect product name (scraping failed). Please enter a name manually.',
+      error: 'Could not auto-detect product name (scraping failed). Please provide a name manually.',
     });
   }
 
@@ -327,6 +327,113 @@ app.delete('/api/purchases/:id', requireAuth, (req, res) => {
   `).get(req.params.id, req.user.id);
   if (!row) return res.status(404).json({ error: 'Not found' });
   db.prepare('DELETE FROM purchases WHERE id = ?').run(row.id);
+  res.json({ ok: true });
+});
+
+// ── Wishlist ──────────────────────────────────────────────────────────────────
+
+function enrichWishlistItem(wi) {
+  const item = db.prepare('SELECT * FROM items WHERE id = ?').get(wi.item_id);
+  if (!item) return null;
+  const latest = db.prepare(
+    'SELECT * FROM price_history WHERE item_id = ? AND error IS NULL ORDER BY checked_at DESC LIMIT 1'
+  ).get(item.id);
+  const stats = db.prepare(
+    'SELECT MIN(price) as lowest, MAX(price) as highest FROM price_history WHERE item_id = ? AND price IS NOT NULL AND error IS NULL'
+  ).get(item.id);
+  return {
+    wishlist_id: wi.id,
+    quantity: wi.quantity,
+    created_at: wi.created_at,
+    ...item,
+    latest: latest || null,
+    lowestPrice: stats?.lowest ?? null,
+    highestPrice: stats?.highest ?? null,
+  };
+}
+
+app.get('/api/wishlist', requireAuth, (req, res) => {
+  const rows = db.prepare('SELECT * FROM wishlist_items WHERE user_id = ? ORDER BY created_at DESC').all(req.user.id);
+  res.json(rows.map(enrichWishlistItem).filter(Boolean));
+});
+
+app.post('/api/wishlist', requireAuth, async (req, res) => {
+  const { item_id, input, name, quantity } = req.body || {};
+  const qty = Math.max(1, parseInt(quantity) || 1);
+
+  // If item_id provided — add existing tracked item to wishlist
+  if (item_id) {
+    const item = db.prepare('SELECT id FROM items WHERE id = ? AND user_id = ?').get(item_id, req.user.id);
+    if (!item) return res.status(404).json({ error: 'Item not found' });
+    const existing = db.prepare('SELECT id FROM wishlist_items WHERE user_id = ? AND item_id = ?').get(req.user.id, item_id);
+    if (existing) {
+      db.prepare('UPDATE wishlist_items SET quantity = ? WHERE id = ?').run(qty, existing.id);
+      return res.json(enrichWishlistItem(db.prepare('SELECT * FROM wishlist_items WHERE id = ?').get(existing.id)));
+    }
+    const { lastInsertRowid } = db.prepare(
+      'INSERT INTO wishlist_items (user_id, item_id, quantity) VALUES (?, ?, ?)'
+    ).run(req.user.id, item_id, qty);
+    return res.json(enrichWishlistItem(db.prepare('SELECT * FROM wishlist_items WHERE id = ?').get(lastInsertRowid)));
+  }
+
+  // Otherwise create/find tracked item from URL/ASIN, then add to wishlist
+  if (!input?.trim()) return res.status(400).json({ error: 'item_id or input URL/ASIN is required' });
+  const normalized = normalizeUrl(input.trim());
+  if (!normalized) return res.status(400).json({ error: 'Could not parse a valid Amazon SA URL/ASIN or IKEA SA URL' });
+  const { url, asin, store } = normalized;
+
+  // Reuse existing item for this user if already tracked
+  let trackedItem = db.prepare('SELECT * FROM items WHERE user_id = ? AND url = ?').get(req.user.id, url);
+  if (!trackedItem) {
+    let finalName = name?.trim() || null;
+    let imageUrl = null;
+    let scraped = null;
+    try {
+      scraped = store === 'ikea_sa' ? await scrapeIkea(url) : await scrapeAmazonSA(url);
+      if (!finalName && scraped.title) finalName = scraped.title;
+      imageUrl = scraped.imageUrl || null;
+    } catch (e) {
+      console.error('[wishlist add] scrape failed:', e.message);
+    }
+    if (!finalName) return res.status(400).json({ error: 'Could not auto-detect product name. Please provide a name.' });
+
+    const { lastInsertRowid: itemId } = db.prepare(
+      'INSERT INTO items (user_id, name, url, asin, image_url, store) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run(req.user.id, finalName, url, asin, imageUrl, store);
+    if (scraped) {
+      db.prepare(
+        'INSERT INTO price_history (item_id, price, original_price, currency, seller_name, is_amazon_direct, is_prime, in_stock, has_other_sellers, other_sellers_price) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      ).run(itemId, scraped.price, scraped.originalPrice, scraped.currency || 'SAR', scraped.sellerName,
+        scraped.isAmazonDirect ? 1 : 0, scraped.isPrime ? 1 : 0, scraped.inStock ? 1 : 0,
+        scraped.hasOtherSellers ? 1 : 0, scraped.otherSellersPrice || null);
+      db.prepare("UPDATE items SET last_checked_at = datetime('now') WHERE id = ?").run(itemId);
+    }
+    trackedItem = db.prepare('SELECT * FROM items WHERE id = ?').get(itemId);
+  }
+
+  const existing = db.prepare('SELECT id FROM wishlist_items WHERE user_id = ? AND item_id = ?').get(req.user.id, trackedItem.id);
+  if (existing) {
+    db.prepare('UPDATE wishlist_items SET quantity = ? WHERE id = ?').run(qty, existing.id);
+    return res.json(enrichWishlistItem(db.prepare('SELECT * FROM wishlist_items WHERE id = ?').get(existing.id)));
+  }
+  const { lastInsertRowid } = db.prepare(
+    'INSERT INTO wishlist_items (user_id, item_id, quantity) VALUES (?, ?, ?)'
+  ).run(req.user.id, trackedItem.id, qty);
+  res.json(enrichWishlistItem(db.prepare('SELECT * FROM wishlist_items WHERE id = ?').get(lastInsertRowid)));
+});
+
+app.put('/api/wishlist/:id', requireAuth, (req, res) => {
+  const wi = db.prepare('SELECT * FROM wishlist_items WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+  if (!wi) return res.status(404).json({ error: 'Not found' });
+  const qty = Math.max(1, parseInt(req.body?.quantity) || wi.quantity);
+  db.prepare('UPDATE wishlist_items SET quantity = ? WHERE id = ?').run(qty, wi.id);
+  res.json(enrichWishlistItem(db.prepare('SELECT * FROM wishlist_items WHERE id = ?').get(wi.id)));
+});
+
+app.delete('/api/wishlist/:id', requireAuth, (req, res) => {
+  const wi = db.prepare('SELECT * FROM wishlist_items WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+  if (!wi) return res.status(404).json({ error: 'Not found' });
+  db.prepare('DELETE FROM wishlist_items WHERE id = ?').run(wi.id);
   res.json({ ok: true });
 });
 

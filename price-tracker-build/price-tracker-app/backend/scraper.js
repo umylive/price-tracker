@@ -27,6 +27,15 @@ function normalizeUrl(input) {
   if (!input) return null;
   const trimmed = input.trim();
   if (trimmed.includes('aliexpress.com')) return null;
+  // IKEA SA
+  if (trimmed.includes('ikea.com')) {
+    const m = trimmed.match(/ikea\.com\/sa\/(?:en|ar)\/p\/([^/?#]+)\/?/i);
+    if (m) {
+      const slug = m[1];
+      return { url: `https://www.ikea.com/sa/en/p/${slug}/`, asin: null, store: 'ikea_sa' };
+    }
+    return null;
+  }
   const asin = extractASIN(trimmed);
   if (asin) return { url: `https://www.amazon.sa/-/en/dp/${asin}`, asin, store: 'amazon_sa' };
   if (trimmed.includes('amazon.sa')) return { url: trimmed, asin: null, store: 'amazon_sa' };
@@ -236,4 +245,108 @@ async function scrapeAmazonSA(url) {
   throw lastError || new Error('Scraping failed');
 }
 
-module.exports = { scrapeAmazonSA, normalizeUrl, extractASIN };
+function parseIkeaCssSelectors($) {
+  const title =
+    $('h1.pip-header-section__title--big').text().trim() ||
+    $('[class*="pip-header-section__title"]').first().text().trim() ||
+    $('h1').first().text().trim();
+  if (!title) return null;
+
+  let price = null;
+  // Try structured IKEA price elements
+  const intEl = $('.pip-price-package__main .pip-price__integer, .pip-temp-price-module__price .pip-price__integer').first().text().replace(/[^\d]/g, '');
+  const decEl = $('.pip-price-package__main .pip-price__decimals, .pip-temp-price-module__price .pip-price__decimals').first().text().replace(/[^\d]/g, '');
+  if (intEl) {
+    price = parseFloat(intEl + '.' + (decEl ? decEl.substring(0, 2).padEnd(2, '0') : '00'));
+  }
+  if (!price) {
+    for (const sel of ['.pip-price__integer', '[class*="price"] .value', '.range-revamp-price__value']) {
+      const t = $(sel).first().text().trim();
+      if (t) { price = parsePrice(t); if (price) break; }
+    }
+  }
+
+  let originalPrice = null;
+  const origInt = $('.pip-price-package__previous .pip-price__integer, .pip-price__previous-price .pip-price__integer').first().text().replace(/[^\d]/g, '');
+  if (origInt) {
+    const origDec = $('.pip-price-package__previous .pip-price__decimals').first().text().replace(/[^\d]/g, '');
+    originalPrice = parseFloat(origInt + '.' + (origDec ? origDec.substring(0, 2).padEnd(2, '0') : '00'));
+  }
+
+  const availText = $('[class*="availability"], [class*="buy-module"], [class*="add-to-bag-button"]').text().toLowerCase();
+  const outOfStockText = $('[class*="out-of-stock"], [class*="not-available"]').text();
+  const inStock = !outOfStockText && (availText.length > 0 || $('[class*="add-to-bag"]').length > 0);
+
+  const imageUrl =
+    $('img[class*="pip-media-grid__image"]').first().attr('src') ||
+    $('img[class*="pip-aspect-ratio-image__image"]').first().attr('src') ||
+    $('[class*="pip-media-grid"] img').first().attr('src') ||
+    $('meta[property="og:image"]').attr('content') || null;
+
+  return {
+    title,
+    price,
+    originalPrice: originalPrice && originalPrice !== price ? originalPrice : null,
+    currency: 'SAR',
+    sellerName: 'IKEA',
+    isAmazonDirect: false,
+    isPrime: false,
+    inStock: inStock !== false,
+    imageUrl,
+    hasOtherSellers: false,
+    otherSellersPrice: null,
+  };
+}
+
+async function scrapeIkea(url) {
+  let lastError;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) await new Promise(r => setTimeout(r, 2000 * attempt));
+    try {
+      const { data, status } = await axios.get(url, {
+        headers: {
+          'User-Agent': getRandomUA(),
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+          'Accept-Language': 'en-SA,en;q=0.9,ar;q=0.8',
+          'Accept-Encoding': 'gzip, deflate, br',
+          'Connection': 'keep-alive',
+          'Upgrade-Insecure-Requests': '1',
+          'Cache-Control': 'max-age=0',
+        },
+        timeout: 20000,
+        maxRedirects: 5,
+      });
+
+      if (status !== 200) throw new Error(`HTTP ${status}`);
+
+      const $ = cheerio.load(data);
+
+      // Try JSON-LD first (IKEA includes structured data)
+      let result = parseJsonLd($);
+      if (!result || !result.title) {
+        result = parseIkeaCssSelectors($);
+      } else {
+        // JSON-LD may lack image/stock; supplement from CSS
+        const css = parseIkeaCssSelectors($);
+        if (css) {
+          if (!result.imageUrl) result.imageUrl = css.imageUrl;
+          if (result.inStock == null) result.inStock = css.inStock;
+          result.sellerName = 'IKEA';
+          result.isAmazonDirect = false;
+        }
+      }
+      if (!result || !result.title) throw new Error('Could not parse IKEA product data from page');
+
+      // Always set IKEA as seller
+      result.sellerName = 'IKEA';
+      result.isAmazonDirect = false;
+      result.currency = 'SAR';
+      return result;
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  throw lastError || new Error('IKEA scraping failed');
+}
+
+module.exports = { scrapeAmazonSA, scrapeIkea, normalizeUrl, extractASIN };

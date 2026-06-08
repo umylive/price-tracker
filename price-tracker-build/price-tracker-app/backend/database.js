@@ -84,6 +84,15 @@ db.exec(`
     purchased_at TEXT NOT NULL DEFAULT (datetime('now')),
     notes TEXT
   );
+
+  CREATE TABLE IF NOT EXISTS wishlist_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+    quantity INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(user_id, item_id)
+  );
 `);
 
 const insertSetting = db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)');
