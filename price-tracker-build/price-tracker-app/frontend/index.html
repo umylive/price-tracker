@@ -241,6 +241,19 @@
       .grid { grid-template-columns: 1fr; }
       .card-stats { grid-template-columns: 1fr 1fr; }
       main { padding: 12px; }
+      header { padding: 0 10px; gap: 6px; flex-wrap: nowrap; overflow-x: auto; }
+      header h1 { font-size: 15px; flex-shrink: 0; }
+      header h1 span { display: none; }
+      .view-tabs { gap: 1px; }
+      .view-tab { padding: 4px 8px; font-size: 12px; white-space: nowrap; }
+      .stats-bar { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+      .stat-tile { padding: 10px 12px; }
+      .stat-tile-value { font-size: 22px !important; }
+      .wishlist-card { flex-wrap: wrap; gap: 10px; }
+      .wishlist-card-subtotal { min-width: unset; }
+      .purchases-summary { grid-template-columns: repeat(2, 1fr); }
+      .sort-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; padding-bottom: 4px; }
+      .sort-scroll > div { min-width: max-content; }
     }
   </style>
 </head>
@@ -512,10 +525,10 @@ function renderGroupBar() {
   const opts = [
     ['none','None'],['category','Category'],['status','Status'],['sale','Sale'],
   ];
-  return `<div style="display:flex;align-items:center;gap:6px;margin-bottom:14px;flex-wrap:wrap">
-    <span style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Group:</span>
-    ${opts.map(([v, l]) => `<button class="btn btn-sm ${state.groupBy===v?'btn-primary':'btn-ghost'}" data-action="group" data-group="${v}">${l}</button>`).join('')}
-  </div>`;
+  return `<div class="sort-scroll" style="margin-bottom:14px"><div style="display:flex;align-items:center;gap:6px;flex-wrap:nowrap">
+    <span style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;flex-shrink:0">Group:</span>
+    ${opts.map(([v, l]) => `<button class="btn btn-sm ${state.groupBy===v?'btn-primary':'btn-ghost'}" data-action="group" data-group="${v}" style="white-space:nowrap">${l}</button>`).join('')}
+  </div></div>`;
 }
 
 function renderGroupedItems(sorted) {
@@ -603,20 +616,20 @@ function renderPurchasedView() {
           '<div style="font-size:12px;color:var(--muted)">Purchased ' + fmtDate(item.purchased_at) + '</div>' +
           (item.notes ? '<div style="font-size:12px;color:var(--muted);font-style:italic;margin-top:2px">' + escHtml(item.notes) + '</div>' : '') +
         '</div>' +
-        '<div style="display:flex;gap:6px;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end">' +
-          '<a href="' + escHtml(item.url) + '" target="_blank" rel="noopener" class="btn btn-ghost btn-sm" style="text-decoration:none">&#x1F517; ' + storeLabel(item) + '</a>' +
-          '<button class="btn btn-ghost btn-sm" data-action="restore-item" data-id="' + item.id + '">↩ Restore</button>' +
+        '<div style="display:flex;gap:6px;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end;align-items:flex-start">' +
+          '<a href="' + escHtml(item.url) + '" target="_blank" rel="noopener" class="btn btn-ghost btn-sm" style="text-decoration:none">&#x1F517;</a>' +
+          '<button class="btn btn-primary btn-sm" data-action="restore-item" data-id="' + item.id + '">&#x21A9; Restore</button>' +
         '</div>' +
       '</div>' +
-      '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding-top:12px;border-top:1px solid var(--border)">' +
-        '<div><div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Paid</div>' +
+      '<div style="display:flex;gap:16px;flex-wrap:wrap;padding-top:12px;border-top:1px solid var(--border)">' +
+        '<div style="min-width:80px"><div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Paid</div>' +
           '<div style="font-size:18px;font-weight:700">' + cur + ' ' + fmtPrice(item.purchased_price) + '</div></div>' +
-        '<div><div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Peak Price</div>' +
+        '<div style="min-width:80px"><div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Peak Price</div>' +
           (item.highest_price
             ? '<div style="font-size:15px;color:var(--muted);text-decoration:line-through">' + cur + ' ' + fmtPrice(item.highest_price) + '</div>'
             : '<div style="font-size:13px;color:var(--muted)">—</div>') +
         '</div>' +
-        '<div><div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Saved</div>' +
+        '<div style="min-width:80px"><div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Saved</div>' +
           (savings > 0
             ? '<div style="font-size:17px;font-weight:700;color:var(--success)">' + cur + ' ' + fmtPrice(savings) +
               ' <span style="font-size:11px;background:var(--success)22;padding:2px 6px;border-radius:20px">' + savingsPct.toFixed(1) + '%</span></div>'
@@ -811,12 +824,12 @@ function renderSortBar() {
   const opts = [
     ['date_desc','Newest'],['date_asc','Oldest'],
     ['price_asc','Price ↑'],['price_desc','Price ↓'],
-    ['store','Store'],['discount','Discount'],['price_drop','Price Drop'],
+    ['store','Store'],['discount','Discount'],['price_drop','Drop'],
   ];
-  return `<div style="display:flex;align-items:center;gap:6px;margin-bottom:14px;flex-wrap:wrap">
-    <span style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Sort:</span>
-    ${opts.map(([v, l]) => `<button class="btn btn-sm ${state.sort===v?'btn-primary':'btn-ghost'}" data-action="sort" data-sort="${v}">${l}</button>`).join('')}
-  </div>`;
+  return `<div class="sort-scroll" style="margin-bottom:14px"><div style="display:flex;align-items:center;gap:6px;flex-wrap:nowrap">
+    <span style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;flex-shrink:0">Sort:</span>
+    ${opts.map(([v, l]) => `<button class="btn btn-sm ${state.sort===v?'btn-primary':'btn-ghost'}" data-action="sort" data-sort="${v}" style="white-space:nowrap">${l}</button>`).join('')}
+  </div></div>`;
 }
 
 function renderEmpty() {
@@ -945,15 +958,15 @@ function renderCard(item) {
 
     ${hasError ? `<div class="card-error">⚠ ${escHtml(p.error)}</div>` : ''}
 
-    <div class="card-actions">
-      <button class="btn btn-ghost btn-sm" data-action="check-item" data-id="${item.id}" ${isChecking ? 'disabled' : ''}>
+    <div class="card-actions" style="flex-wrap:wrap;gap:5px">
+      <button class="btn btn-ghost btn-sm" data-action="check-item" data-id="${item.id}" ${isChecking ? 'disabled' : ''} style="flex:0 0 auto">
         ${isChecking ? '<span class="spinner"></span>' : '🔄'} Check
       </button>
-      <button class="btn btn-ghost btn-sm" data-action="view-history" data-id="${item.id}">📈 History</button>
-      <button class="btn btn-ghost btn-sm" data-action="edit-item" data-id="${item.id}">✏️ Edit</button>
-      <a href="${escHtml(item.url)}" target="_blank" rel="noopener" class="btn btn-ghost btn-sm" style="text-decoration:none;flex:1;justify-content:center">🔗 ${item.store === 'ikea_sa' ? 'IKEA' : 'Amazon'}</a>
-      <button class="btn btn-ghost btn-sm" data-action="add-to-wishlist" data-id="${item.id}" title="Add to Wishlist">🛒+</button>
-      <button class="btn btn-ghost btn-sm" data-action="mark-bought" data-id="${item.id}">Bought</button>
+      <button class="btn btn-ghost btn-sm" data-action="view-history" data-id="${item.id}" style="flex:0 0 auto">📈</button>
+      <button class="btn btn-ghost btn-sm" data-action="edit-item" data-id="${item.id}" style="flex:0 0 auto">✏️</button>
+      <a href="${escHtml(item.url)}" target="_blank" rel="noopener" class="btn btn-ghost btn-sm" style="text-decoration:none;flex:0 0 auto">🔗</a>
+      <button class="btn btn-ghost btn-sm" data-action="add-to-wishlist" data-id="${item.id}" title="Add to Wishlist" style="flex:0 0 auto">🛒+</button>
+      <button class="btn btn-primary btn-sm" data-action="mark-bought" data-id="${item.id}" style="flex:1;justify-content:center;min-width:70px">Bought</button>
     </div>
   </div>`;
 }
@@ -1359,12 +1372,12 @@ async function openPurchasesSheet() {
           '</div>' +
           '<button class="btn-icon" data-action="delete-purchase" data-id="' + p.id + '" title="Remove" style="font-size:16px;color:var(--muted);flex-shrink:0">🗑</button>' +
         '</div>' +
-        '<div class="purchase-item-prices">' +
-          '<div class="purchase-price-col"><span>Paid</span><div style="font-size:17px;font-weight:700">' + cur + ' ' + fmtPrice(p.purchased_price) + '</div></div>' +
-          '<div class="purchase-price-col"><span>Peak Price</span>' +
+        '<div style="display:flex;gap:16px;flex-wrap:wrap;padding-top:12px;border-top:1px solid var(--border)">' +
+          '<div style="min-width:80px"><span style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:4px">Paid</span><div style="font-size:17px;font-weight:700">' + cur + ' ' + fmtPrice(p.purchased_price) + '</div></div>' +
+          '<div style="min-width:80px"><span style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:4px">Peak Price</span>' +
             (p.highest_price ? '<div style="font-size:14px;color:var(--muted);text-decoration:line-through">' + cur + ' ' + fmtPrice(p.highest_price) + '</div>' : '<div style="font-size:13px;color:var(--muted)">—</div>') +
           '</div>' +
-          '<div class="purchase-price-col"><span>Saved</span>' + savingsHtml + '</div>' +
+          '<div style="min-width:80px"><span style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:4px">Saved</span>' + savingsHtml + '</div>' +
         '</div>' +
         '</div>';
     }).join('');

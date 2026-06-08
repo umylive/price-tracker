@@ -245,43 +245,105 @@ async function scrapeAmazonSA(url) {
   throw lastError || new Error('Scraping failed');
 }
 
-function parseIkeaCssSelectors($) {
+function safeParseFloat(v) {
+  const n = parseFloat(String(v ?? '').replace(/[,،\s]/g, ''));
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function parseIkeaNextData(html) {
+  // IKEA uses Next.js; product data is embedded in __NEXT_DATA__
+  const m = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
+  if (!m) return null;
+  try {
+    const nd = JSON.parse(m[1]);
+    const props = nd?.props?.pageProps;
+    if (!props) return null;
+    const product = props.product || props.initialData?.product ||
+                    props.data?.product || props.pageData?.product;
+    if (!product) return null;
+    const title = product.name || product.productTitle || product.title;
+    if (!title) return null;
+
+    let price = null;
+    const pd = product.price || product.salesPrice;
+    if (pd != null) {
+      if (typeof pd === 'number') price = pd;
+      else if (typeof pd === 'object') price = pd.currentPrice ?? pd.value ?? pd.price ?? null;
+      else price = safeParseFloat(pd);
+    }
+    if (!Number.isFinite(price) || price <= 0) price = null;
+
+    const media = product.mainImage?.url || product.images?.[0]?.url ||
+                  product.media?.[0]?.sources?.[0]?.url || null;
+    const inStock = product.availability !== 'OUT_OF_STOCK' &&
+                    product.inStock !== false && product.buyable !== false;
+    return {
+      title,
+      price,
+      originalPrice: null,
+      currency: 'SAR',
+      sellerName: 'IKEA',
+      isAmazonDirect: false,
+      isPrime: false,
+      inStock: !!inStock,
+      imageUrl: media,
+      hasOtherSellers: false,
+      otherSellersPrice: null,
+    };
+  } catch (_) { return null; }
+}
+
+function parseIkeaCssSelectors($, html) {
   const title =
     $('h1.pip-header-section__title--big').text().trim() ||
     $('[class*="pip-header-section__title"]').first().text().trim() ||
+    $('meta[property="og:title"]').attr('content')?.trim() ||
     $('h1').first().text().trim();
-  if (!title) return null;
+  if (!title || title.length < 3) return null;
 
   let price = null;
-  // Try structured IKEA price elements
-  const intEl = $('.pip-price-package__main .pip-price__integer, .pip-temp-price-module__price .pip-price__integer').first().text().replace(/[^\d]/g, '');
-  const decEl = $('.pip-price-package__main .pip-price__decimals, .pip-temp-price-module__price .pip-price__decimals').first().text().replace(/[^\d]/g, '');
-  if (intEl) {
-    price = parseFloat(intEl + '.' + (decEl ? decEl.substring(0, 2).padEnd(2, '0') : '00'));
-  }
+  const intEl = $([
+    '.pip-price-package__main .pip-price__integer',
+    '.pip-temp-price-module__price .pip-price__integer',
+    '.range-revamp-price__integer',
+  ].join(', ')).first().text().replace(/[^\d]/g, '');
+  const decEl = $([
+    '.pip-price-package__main .pip-price__decimals',
+    '.pip-temp-price-module__price .pip-price__decimals',
+    '.range-revamp-price__decimals',
+  ].join(', ')).first().text().replace(/[^\d]/g, '');
+  if (intEl) price = safeParseFloat(intEl + '.' + (decEl ? decEl.substring(0, 2) : '00'));
+
   if (!price) {
-    for (const sel of ['.pip-price__integer', '[class*="price"] .value', '.range-revamp-price__value']) {
-      const t = $(sel).first().text().trim();
-      if (t) { price = parsePrice(t); if (price) break; }
+    for (const sel of [
+      '[class*="pip-price"][class*="integer"]',
+      '.pip-price__integer',
+      '[data-price]',
+    ]) {
+      const t = $(sel).first().attr('data-price') || $(sel).first().text().trim();
+      if (t) { price = safeParseFloat(t); if (price) break; }
     }
   }
 
   let originalPrice = null;
-  const origInt = $('.pip-price-package__previous .pip-price__integer, .pip-price__previous-price .pip-price__integer').first().text().replace(/[^\d]/g, '');
+  const origInt = $([
+    '.pip-price-package__previous .pip-price__integer',
+    '.pip-price__previous-price .pip-price__integer',
+  ].join(', ')).first().text().replace(/[^\d]/g, '');
   if (origInt) {
     const origDec = $('.pip-price-package__previous .pip-price__decimals').first().text().replace(/[^\d]/g, '');
-    originalPrice = parseFloat(origInt + '.' + (origDec ? origDec.substring(0, 2).padEnd(2, '0') : '00'));
+    originalPrice = safeParseFloat(origInt + '.' + (origDec ? origDec.substring(0, 2) : '00'));
   }
 
-  const availText = $('[class*="availability"], [class*="buy-module"], [class*="add-to-bag-button"]').text().toLowerCase();
-  const outOfStockText = $('[class*="out-of-stock"], [class*="not-available"]').text();
-  const inStock = !outOfStockText && (availText.length > 0 || $('[class*="add-to-bag"]').length > 0);
+  const outEl = $('[class*="out-of-stock"], [class*="not-available"], [class*="outOfStock"]');
+  const hasBuyBtn = $('[class*="add-to-bag"], [class*="buy-button"], button[class*="buy"]').length > 0;
+  const inStock = outEl.length === 0 && (hasBuyBtn || $('[class*="buy-module"]').length > 0);
 
   const imageUrl =
+    $('meta[property="og:image"]').attr('content') ||
     $('img[class*="pip-media-grid__image"]').first().attr('src') ||
     $('img[class*="pip-aspect-ratio-image__image"]').first().attr('src') ||
-    $('[class*="pip-media-grid"] img').first().attr('src') ||
-    $('meta[property="og:image"]').attr('content') || null;
+    $('[class*="pip-media-grid"] img').first().attr('src') || null;
 
   return {
     title,
@@ -291,7 +353,7 @@ function parseIkeaCssSelectors($) {
     sellerName: 'IKEA',
     isAmazonDirect: false,
     isPrime: false,
-    inStock: inStock !== false,
+    inStock,
     imageUrl,
     hasOtherSellers: false,
     otherSellersPrice: null,
@@ -307,13 +369,17 @@ async function scrapeIkea(url) {
         headers: {
           'User-Agent': getRandomUA(),
           'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-          'Accept-Language': 'en-SA,en;q=0.9,ar;q=0.8',
+          'Accept-Language': 'en-SA,en;q=0.9',
           'Accept-Encoding': 'gzip, deflate, br',
           'Connection': 'keep-alive',
           'Upgrade-Insecure-Requests': '1',
+          'Sec-Fetch-Dest': 'document',
+          'Sec-Fetch-Mode': 'navigate',
+          'Sec-Fetch-Site': 'none',
           'Cache-Control': 'max-age=0',
+          'Referer': 'https://www.ikea.com/sa/en/',
         },
-        timeout: 20000,
+        timeout: 25000,
         maxRedirects: 5,
       });
 
@@ -321,26 +387,34 @@ async function scrapeIkea(url) {
 
       const $ = cheerio.load(data);
 
-      // Try JSON-LD first (IKEA includes structured data)
-      let result = parseJsonLd($);
+      // 1) Try __NEXT_DATA__ (IKEA is a Next.js app)
+      let result = parseIkeaNextData(data);
+
+      // 2) Fall back to JSON-LD
       if (!result || !result.title) {
-        result = parseIkeaCssSelectors($);
-      } else {
-        // JSON-LD may lack image/stock; supplement from CSS
-        const css = parseIkeaCssSelectors($);
-        if (css) {
-          if (!result.imageUrl) result.imageUrl = css.imageUrl;
-          if (result.inStock == null) result.inStock = css.inStock;
+        result = parseJsonLd($);
+        if (result) {
           result.sellerName = 'IKEA';
           result.isAmazonDirect = false;
+          result.currency = 'SAR';
         }
       }
-      if (!result || !result.title) throw new Error('Could not parse IKEA product data from page');
 
-      // Always set IKEA as seller
+      // 3) Fall back to CSS selectors
+      if (!result || !result.title) {
+        result = parseIkeaCssSelectors($, data);
+      }
+
+      if (!result || !result.title) throw new Error('Could not parse IKEA product data — page may be JS-rendered or blocked');
+
+      // Ensure all price fields are safe numbers (no NaN/Infinity)
+      result.price = Number.isFinite(result.price) && result.price > 0 ? result.price : null;
+      result.originalPrice = Number.isFinite(result.originalPrice) && result.originalPrice > 0 ? result.originalPrice : null;
       result.sellerName = 'IKEA';
       result.isAmazonDirect = false;
       result.currency = 'SAR';
+      result.hasOtherSellers = false;
+      result.otherSellersPrice = null;
       return result;
     } catch (err) {
       lastError = err;

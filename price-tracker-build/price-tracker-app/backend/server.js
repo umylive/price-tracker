@@ -104,57 +104,61 @@ app.get('/api/items', requireAuth, (req, res) => {
 });
 
 app.post('/api/items', requireAuth, async (req, res) => {
-  const { name, input, target_price, notify_drop_percent } = req.body || {};
-  if (!input?.trim()) return res.status(400).json({ error: 'Product URL or ASIN is required' });
-
-  const normalized = normalizeUrl(input.trim());
-  if (!normalized) return res.status(400).json({ error: 'Could not parse a valid Amazon SA URL/ASIN or IKEA SA URL' });
-  const { url, asin, store } = normalized;
-
-  const existing = db.prepare('SELECT id FROM items WHERE user_id = ? AND url = ?').get(req.user.id, url);
-  if (existing) return res.status(400).json({ error: 'This item is already being tracked' });
-
-  let finalName = name?.trim() || null;
-  let imageUrl = null;
-  let scraped = null;
   try {
-    scraped = store === 'ikea_sa' ? await scrapeIkea(url) : await scrapeAmazonSA(url);
-    if (!finalName && scraped.title) finalName = scraped.title;
-    imageUrl = scraped.imageUrl || null;
-  } catch (e) {
-    console.error('[add-item] Initial scrape failed:', e.message);
-  }
+    const { name, input, target_price, notify_drop_percent } = req.body || {};
+    if (!input?.trim()) return res.status(400).json({ error: 'Product URL or ASIN is required' });
 
-  if (!finalName) {
-    return res.status(400).json({
-      error: 'Could not auto-detect product name (scraping failed). Please provide a name manually.',
-    });
-  }
+    const normalized = normalizeUrl(input.trim());
+    if (!normalized) return res.status(400).json({ error: 'Could not parse a valid Amazon SA URL/ASIN or IKEA SA URL' });
+    const { url, asin, store } = normalized;
 
-  const { lastInsertRowid } = db.prepare(`
-    INSERT INTO items (user_id, name, url, asin, image_url, store, target_price, notify_drop_percent)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    req.user.id, finalName, url, asin, imageUrl, store,
-    target_price ? parseFloat(target_price) : null,
-    notify_drop_percent ? parseFloat(notify_drop_percent) : 5
-  );
+    const existing = db.prepare('SELECT id FROM items WHERE user_id = ? AND url = ?').get(req.user.id, url);
+    if (existing) return res.status(400).json({ error: 'This item is already being tracked' });
 
-  if (scraped) {
-    db.prepare(`
-      INSERT INTO price_history (item_id, price, original_price, currency, seller_name, is_amazon_direct, is_prime, in_stock, has_other_sellers, other_sellers_price)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      lastInsertRowid,
-      scraped.price, scraped.originalPrice, scraped.currency || 'SAR',
-      scraped.sellerName, scraped.isAmazonDirect ? 1 : 0,
-      scraped.isPrime ? 1 : 0, scraped.inStock ? 1 : 0,
-      scraped.hasOtherSellers ? 1 : 0, scraped.otherSellersPrice || null
+    let finalName = name?.trim() || null;
+    let imageUrl = null;
+    let scraped = null;
+    try {
+      scraped = store === 'ikea_sa' ? await scrapeIkea(url) : await scrapeAmazonSA(url);
+      if (!finalName && scraped.title) finalName = scraped.title;
+      imageUrl = scraped.imageUrl || null;
+    } catch (e) {
+      console.error('[add-item] Initial scrape failed:', e.message);
+    }
+
+    if (!finalName) {
+      return res.status(400).json({
+        error: 'Could not auto-detect product name (scraping failed). Please provide a name manually.',
+      });
+    }
+
+    const safeNum = v => (v != null && Number.isFinite(v) ? v : null);
+    const { lastInsertRowid } = db.prepare(
+      'INSERT INTO items (user_id, name, url, asin, image_url, store, target_price, notify_drop_percent) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+    ).run(
+      req.user.id, finalName, url, asin || null, imageUrl || null, store,
+      target_price ? safeNum(parseFloat(target_price)) : null,
+      notify_drop_percent ? safeNum(parseFloat(notify_drop_percent)) ?? 5 : 5
     );
-    db.prepare("UPDATE items SET last_checked_at = datetime('now') WHERE id = ?").run(lastInsertRowid);
-  }
 
-  res.json(db.prepare('SELECT * FROM items WHERE id = ?').get(lastInsertRowid));
+    if (scraped) {
+      db.prepare(
+        'INSERT INTO price_history (item_id, price, original_price, currency, seller_name, is_amazon_direct, is_prime, in_stock, has_other_sellers, other_sellers_price) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      ).run(
+        lastInsertRowid,
+        safeNum(scraped.price), safeNum(scraped.originalPrice), scraped.currency || 'SAR',
+        scraped.sellerName || null, scraped.isAmazonDirect ? 1 : 0,
+        scraped.isPrime ? 1 : 0, scraped.inStock ? 1 : 0,
+        scraped.hasOtherSellers ? 1 : 0, safeNum(scraped.otherSellersPrice)
+      );
+      db.prepare("UPDATE items SET last_checked_at = datetime('now') WHERE id = ?").run(lastInsertRowid);
+    }
+
+    res.json(db.prepare('SELECT * FROM items WHERE id = ?').get(lastInsertRowid));
+  } catch (err) {
+    console.error('[add-item] Error:', err.message, err.stack);
+    if (!res.headersSent) res.status(500).json({ error: 'Failed to add item: ' + err.message });
+  }
 });
 
 app.put('/api/items/:id', requireAuth, (req, res) => {
@@ -358,6 +362,7 @@ app.get('/api/wishlist', requireAuth, (req, res) => {
 });
 
 app.post('/api/wishlist', requireAuth, async (req, res) => {
+  try {
   const { item_id, input, name, quantity } = req.body || {};
   const qty = Math.max(1, parseInt(quantity) || 1);
 
@@ -397,15 +402,16 @@ app.post('/api/wishlist', requireAuth, async (req, res) => {
     }
     if (!finalName) return res.status(400).json({ error: 'Could not auto-detect product name. Please provide a name.' });
 
+    const safeNum = v => (v != null && Number.isFinite(v) ? v : null);
     const { lastInsertRowid: itemId } = db.prepare(
       'INSERT INTO items (user_id, name, url, asin, image_url, store) VALUES (?, ?, ?, ?, ?, ?)'
-    ).run(req.user.id, finalName, url, asin, imageUrl, store);
+    ).run(req.user.id, finalName, url, asin || null, imageUrl || null, store);
     if (scraped) {
       db.prepare(
         'INSERT INTO price_history (item_id, price, original_price, currency, seller_name, is_amazon_direct, is_prime, in_stock, has_other_sellers, other_sellers_price) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-      ).run(itemId, scraped.price, scraped.originalPrice, scraped.currency || 'SAR', scraped.sellerName,
+      ).run(itemId, safeNum(scraped.price), safeNum(scraped.originalPrice), scraped.currency || 'SAR', scraped.sellerName || null,
         scraped.isAmazonDirect ? 1 : 0, scraped.isPrime ? 1 : 0, scraped.inStock ? 1 : 0,
-        scraped.hasOtherSellers ? 1 : 0, scraped.otherSellersPrice || null);
+        scraped.hasOtherSellers ? 1 : 0, safeNum(scraped.otherSellersPrice));
       db.prepare("UPDATE items SET last_checked_at = datetime('now') WHERE id = ?").run(itemId);
     }
     trackedItem = db.prepare('SELECT * FROM items WHERE id = ?').get(itemId);
@@ -420,6 +426,10 @@ app.post('/api/wishlist', requireAuth, async (req, res) => {
     'INSERT INTO wishlist_items (user_id, item_id, quantity) VALUES (?, ?, ?)'
   ).run(req.user.id, trackedItem.id, qty);
   res.json(enrichWishlistItem(db.prepare('SELECT * FROM wishlist_items WHERE id = ?').get(lastInsertRowid)));
+  } catch (err) {
+    console.error('[wishlist add] Error:', err.message, err.stack);
+    if (!res.headersSent) res.status(500).json({ error: 'Failed to add to wishlist: ' + err.message });
+  }
 });
 
 app.put('/api/wishlist/:id', requireAuth, (req, res) => {
@@ -445,6 +455,17 @@ app.get('*', (req, res) => {
   } else {
     res.sendFile(path.join(FRONTEND_DIR, 'index.html'));
   }
+});
+
+// ── Global error handler ──────────────────────────────────────────────────────
+app.use((err, req, res, next) => {
+  console.error('[express error]', err.message, err.stack);
+  if (!res.headersSent) res.status(500).json({ error: err.message || 'Internal server error' });
+});
+
+// Prevent unhandled rejections from crashing the process
+process.on('unhandledRejection', (reason) => {
+  console.error('[unhandledRejection]', reason);
 });
 
 app.listen(PORT, () => {
