@@ -273,8 +273,16 @@ function parseIkeaNextData(html) {
     }
     if (!Number.isFinite(price) || price <= 0) price = null;
 
-    const media = product.mainImage?.url || product.images?.[0]?.url ||
-                  product.media?.[0]?.sources?.[0]?.url || null;
+    let media = product.mainImage?.url || product.images?.[0]?.url ||
+               product.media?.[0]?.sources?.[0]?.url ||
+               product.media?.[0]?.url ||
+               product.images?.[0]?.href ||
+               product.imageUrl || product.image || null;
+    // Broad regex fallback: find any image URL in the raw __NEXT_DATA__ JSON
+    if (!media) {
+      const imgM = m[1].match(/"(?:url|src|imageUrl|href)"\s*:\s*"(https?:\/\/[^"]+\.(?:jpg|jpeg|png|webp)[^"]*?)"/i);
+      if (imgM) media = imgM[1];
+    }
     const inStock = product.availability !== 'OUT_OF_STOCK' &&
                     product.inStock !== false && product.buyable !== false;
     return {
@@ -407,13 +415,16 @@ async function scrapeIkea(url) {
 
       if (!result || !result.title) throw new Error('Could not parse IKEA product data — page may be JS-rendered or blocked');
 
-      // Always try og:image as fallback — parseIkeaNextData may return null imageUrl
+      // Always try og:image / HTML fallbacks in case __NEXT_DATA__ had no image
       if (!result.imageUrl) {
         result.imageUrl =
           $('meta[property="og:image"]').attr('content') ||
+          $('meta[name="og:image"]').attr('content') ||
+          $('meta[name="twitter:image"]').attr('content') ||
           $('img[class*="pip-media-grid__image"]').first().attr('src') ||
           $('img[class*="pip-aspect-ratio-image__image"]').first().attr('src') ||
-          $('[class*="pip-media-grid"] img').first().attr('src') || null;
+          $('[class*="pip-media-grid"] img').first().attr('src') ||
+          $('img[src*="ikea.com"]').first().attr('src') || null;
       }
 
       // Ensure all price fields are safe numbers (no NaN/Infinity)
